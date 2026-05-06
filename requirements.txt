@@ -1,0 +1,6 @@
+aiogram
+aiosqlite
+httpx
+python-dotenv
+PyMuPDF
+pytest
