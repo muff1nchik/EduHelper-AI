@@ -78,6 +78,49 @@ class Database:
             )
             await db.commit()
 
+    async def add_document_with_chunks(
+        self,
+        user_id: int,
+        filename: str,
+        file_path: str,
+        chunks: list[dict],
+    ) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
+            try:
+                await db.execute("BEGIN")
+                cursor = await db.execute(
+                    """
+                    INSERT INTO documents (user_id, filename, file_path, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (user_id, filename, file_path, self._now()),
+                )
+                document_id = int(cursor.lastrowid)
+
+                for chunk in chunks:
+                    await db.execute(
+                        """
+                        INSERT INTO chunks
+                            (document_id, user_id, chunk_index, content, embedding, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            document_id,
+                            user_id,
+                            chunk["chunk_index"],
+                            chunk["content"],
+                            json.dumps(chunk["embedding"]),
+                            self._now(),
+                        ),
+                    )
+
+                await db.commit()
+                return document_id
+            except Exception:
+                await db.rollback()
+                raise
+
     async def get_user_chunks(self, user_id: int) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row

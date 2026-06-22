@@ -23,17 +23,23 @@ class EduHelperService:
         if not chunks:
             raise ValueError("Документ пустой после очистки текста.")
 
-        document_id = await self.database.add_document(user_id, filename, file_path)
+        prepared_chunks = []
         for index, chunk in enumerate(chunks):
             embedding = await self.ollama_client.embed(chunk)
-            await self.database.add_chunk(
-                document_id=document_id,
-                user_id=user_id,
-                content=chunk,
-                embedding=embedding,
-                chunk_index=index,
+            prepared_chunks.append(
+                {
+                    "content": chunk,
+                    "embedding": embedding,
+                    "chunk_index": index,
+                }
             )
 
+        await self.database.add_document_with_chunks(
+            user_id=user_id,
+            filename=filename,
+            file_path=file_path,
+            chunks=prepared_chunks,
+        )
         return len(chunks)
 
     async def answer_question(self, user_id: int, question: str) -> str:
