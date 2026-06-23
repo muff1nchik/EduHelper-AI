@@ -38,6 +38,17 @@ class Database:
                 )
                 """
             )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_state (
+                    user_id INTEGER PRIMARY KEY,
+                    active_document_id INTEGER,
+                    FOREIGN KEY(active_document_id)
+                        REFERENCES documents(id)
+                        ON DELETE SET NULL
+                )
+                """
+            )
             await db.commit()
 
     async def add_document(self, user_id: int, filename: str, file_path: str) -> int:
@@ -115,6 +126,15 @@ class Database:
                         ),
                     )
 
+                await db.execute(
+                    """
+                    INSERT INTO user_state (user_id, active_document_id)
+                    VALUES (?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        active_document_id = excluded.active_document_id
+                    """,
+                    (user_id, document_id),
+                )
                 await db.commit()
                 return document_id
             except Exception:
@@ -150,6 +170,111 @@ class Database:
                 raise RuntimeError("В базе найден некорректный embedding.") from exc
             chunks.append(item)
         return chunks
+
+    async def get_document_chunks(self, user_id: int, document_id: int) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT
+                    chunks.id AS chunk_id,
+                    chunks.document_id,
+                    documents.filename,
+                    chunks.content,
+                    chunks.embedding
+                FROM chunks
+                JOIN documents ON documents.id = chunks.document_id
+                WHERE chunks.user_id = ?
+                    AND chunks.document_id = ?
+                    AND documents.user_id = ?
+                ORDER BY chunks.chunk_index
+                """,
+                (user_id, document_id, user_id),
+            )
+            rows = await cursor.fetchall()
+
+        chunks = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["embedding"] = json.loads(item["embedding"])
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("В базе найден некорректный embedding.") from exc
+            chunks.append(item)
+        return chunks
+
+    async def get_user_documents(self, user_id: int) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT id, filename
+                FROM documents
+                WHERE user_id = ?
+                ORDER BY id DESC
+                """,
+                (user_id,),
+            )
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def set_active_document(self, user_id: int, document_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute("PRAGMA foreign_keys = ON")
+            cursor = await db.execute(
+                """
+                SELECT id, filename
+                FROM documents
+                WHERE id = ? AND user_id = ?
+                """,
+                (document_id, user_id),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+
+            await db.execute(
+                """
+                INSERT INTO user_state (user_id, active_document_id)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    active_document_id = excluded.active_document_id
+                """,
+                (user_id, document_id),
+            )
+            await db.commit()
+        return dict(row)
+
+    async def get_active_document(self, user_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT documents.id, documents.filename
+                FROM user_state
+                JOIN documents ON documents.id = user_state.active_document_id
+                WHERE user_state.user_id = ?
+                    AND documents.user_id = ?
+                """,
+                (user_id, user_id),
+            )
+            row = await cursor.fetchone()
+            if row is not None:
+                return dict(row)
+
+            cursor = await db.execute(
+                """
+                SELECT id, filename
+                FROM documents
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+        return dict(row) if row is not None else None
 
     async def clear_user_data(self, user_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:

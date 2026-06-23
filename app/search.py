@@ -2,6 +2,9 @@ import math
 
 
 class VectorSearch:
+    def __init__(self, min_similarity: float = 0.35) -> None:
+        self.min_similarity = min_similarity
+
     def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         if not vec1 or not vec2 or len(vec1) != len(vec2):
             raise ValueError("Embeddings должны быть непустыми векторами одинаковой длины.")
@@ -30,14 +33,15 @@ class VectorSearch:
             except (TypeError, ValueError) as exc:
                 raise ValueError("В чанках найден некорректный embedding.") from exc
 
-            results.append(
-                {
-                    "chunk_id": chunk.get("chunk_id") or chunk.get("id"),
-                    "document_id": chunk.get("document_id"),
-                    "filename": chunk.get("filename"),
-                    "content": chunk.get("content", ""),
-                    "score": score,
-                }
-            )
+            if score >= self.min_similarity:
+                results.append(
+                    {
+                        "chunk_id": chunk.get("chunk_id") or chunk.get("id"),
+                        "document_id": chunk.get("document_id"),
+                        "filename": chunk.get("filename"),
+                        "content": chunk.get("content", ""),
+                        "score": score,
+                    }
+                )
 
         return sorted(results, key=lambda item: item["score"], reverse=True)[:top_k]

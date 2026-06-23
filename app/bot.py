@@ -32,13 +32,48 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             "Команды:\n"
             "/start — начало работы\n"
             "/help — помощь\n"
-            "/clear — очистить загруженные материалы"
+            "/clear — очистить загруженные материалы\n"
+            "/documents — список загруженных материалов\n"
+            "/use ID — выбрать активный материал"
         )
 
     @router.message(Command("clear"))
     async def clear(message: Message) -> None:
         await database.clear_user_data(message.from_user.id)
         await message.answer("Ваши загруженные материалы очищены.")
+
+    @router.message(Command("documents"))
+    async def documents(message: Message) -> None:
+        if message.from_user is None:
+            await message.answer("Не удалось определить пользователя.")
+            return
+
+        answer = await service.list_documents(message.from_user.id)
+        await message.answer(answer)
+
+    @router.message(Command("use"))
+    async def use_document(message: Message) -> None:
+        if message.from_user is None:
+            await message.answer("Не удалось определить пользователя.")
+            return
+
+        parts = (message.text or "").split()
+        if len(parts) != 2:
+            await message.answer("Использование: /use ID")
+            return
+
+        try:
+            document_id = int(parts[1])
+        except ValueError:
+            await message.answer("Использование: /use ID")
+            return
+
+        if document_id <= 0:
+            await message.answer("Использование: /use ID")
+            return
+
+        answer = await service.use_document(message.from_user.id, document_id)
+        await message.answer(answer)
 
     @router.message(F.document)
     async def handle_document(message: Message, bot: Bot) -> None:

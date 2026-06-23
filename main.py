@@ -29,7 +29,7 @@ async def main() -> None:
         num_ctx=settings.ollama_num_ctx,
     )
     splitter = TextSplitter(settings.chunk_size, settings.chunk_overlap)
-    search_engine = VectorSearch()
+    search_engine = VectorSearch(settings.min_similarity)
     service = EduHelperService(
         settings=settings,
         database=database,

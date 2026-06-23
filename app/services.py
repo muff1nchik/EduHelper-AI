@@ -1,4 +1,5 @@
 from app.loaders import get_loader
+from app.messages import INSUFFICIENT_INFORMATION_MESSAGE
 
 
 class EduHelperService:
@@ -43,20 +44,48 @@ class EduHelperService:
         return len(chunks)
 
     async def answer_question(self, user_id: int, question: str) -> str:
-        if not await self.database.user_has_chunks(user_id):
+        active_document = await self.database.get_active_document(user_id)
+        if active_document is None:
             return "Сначала загрузите учебный файл."
 
         query_embedding = await self.ollama_client.embed(question)
-        chunks = await self.database.get_user_chunks(user_id)
+        chunks = await self.database.get_document_chunks(user_id, active_document["id"])
         results = self.search_engine.search(chunks, query_embedding, self.settings.top_k)
+        if not results:
+            return INSUFFICIENT_INFORMATION_MESSAGE
+
         context_chunks = [result["content"] for result in results if result.get("content")]
         if not context_chunks:
-            return "Не удалось найти релевантные фрагменты в загруженных материалах."
+            return INSUFFICIENT_INFORMATION_MESSAGE
         answer = await self.ollama_client.generate_answer(question, context_chunks)
+        if answer.strip() == INSUFFICIENT_INFORMATION_MESSAGE:
+            return INSUFFICIENT_INFORMATION_MESSAGE
+
         sources = _format_sources(results)
         if sources:
             return f"{answer}\n\n{sources}"
         return answer
+
+    async def use_document(self, user_id: int, document_id: int) -> str:
+        document = await self.database.set_active_document(user_id, document_id)
+        if document is None:
+            return "Документ с таким ID не найден."
+        return f"Активный материал: {document['filename']}"
+
+    async def list_documents(self, user_id: int) -> str:
+        documents = await self.database.get_user_documents(user_id)
+        if not documents:
+            return "У вас пока нет загруженных материалов."
+
+        active_document = await self.database.get_active_document(user_id)
+        active_document_id = active_document["id"] if active_document else None
+        lines = ["Ваши загруженные материалы:", ""]
+        for document in documents:
+            line = f"{document['id']}. {document['filename']}"
+            if document["id"] == active_document_id:
+                line = f"{line} — активный"
+            lines.append(line)
+        return "\n".join(lines)
 
 
 def _format_sources(results: list[dict]) -> str:

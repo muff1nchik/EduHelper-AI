@@ -1,5 +1,7 @@
 import httpx
 
+from app.messages import INSUFFICIENT_INFORMATION_MESSAGE
+
 
 OLLAMA_ERROR = (
     "Не удалось подключиться к Ollama. Проверьте, что Ollama запущена "
@@ -17,11 +19,13 @@ SYSTEM_PROMPT = """
 Если пользователь отдельно просит объяснить материал или привести пример,
 пояснение разрешено, но оно должно основываться только на переданном контексте.
 Если информации недостаточно, ответь ровно так:
-В загруженных материалах не найдено достаточно информации для ответа.
+{insufficient_information_message}
 Ответ должен быть обычным текстом для Telegram.
 Не используй Markdown-жирный текст через **, заголовки с #, обратные кавычки,
 Markdown-таблицы и HTML-разметку.
-""".strip()
+""".format(
+    insufficient_information_message=INSUFFICIENT_INFORMATION_MESSAGE
+).strip()
 
 
 class OllamaClient:

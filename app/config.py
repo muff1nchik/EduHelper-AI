@@ -17,6 +17,7 @@ class Settings:
     chunk_size: int
     chunk_overlap: int
     top_k: int
+    min_similarity: float
 
 
 def _get_int(name: str, default: int) -> int:
@@ -33,6 +34,13 @@ def _get_float(name: str, default: float) -> float:
         return float(value)
     except ValueError as exc:
         raise ValueError(f"Настройка {name} должна быть числом.") from exc
+
+
+def _get_min_similarity() -> float:
+    value = _get_float("MIN_SIMILARITY", 0.35)
+    if not -1.0 <= value <= 1.0:
+        raise ValueError("Настройка MIN_SIMILARITY должна быть от -1.0 до 1.0.")
+    return value
 
 
 def load_settings() -> Settings:
@@ -57,4 +65,5 @@ def load_settings() -> Settings:
         chunk_size=_get_int("CHUNK_SIZE", 800),
         chunk_overlap=_get_int("CHUNK_OVERLAP", 150),
         top_k=_get_int("TOP_K", 4),
+        min_similarity=_get_min_similarity(),
     )
