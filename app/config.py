@@ -10,6 +10,8 @@ class Settings:
     ollama_base_url: str
     ollama_chat_model: str
     ollama_embedding_model: str
+    ollama_temperature: float
+    ollama_num_ctx: int
     database_path: str
     uploads_dir: str
     chunk_size: int
@@ -23,6 +25,14 @@ def _get_int(name: str, default: int) -> int:
         return int(value)
     except ValueError as exc:
         raise ValueError(f"Настройка {name} должна быть целым числом.") from exc
+
+
+def _get_float(name: str, default: float) -> float:
+    value = os.getenv(name, str(default))
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ValueError(f"Настройка {name} должна быть числом.") from exc
 
 
 def load_settings() -> Settings:
@@ -40,6 +50,8 @@ def load_settings() -> Settings:
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/"),
         ollama_chat_model=os.getenv("OLLAMA_CHAT_MODEL", "qwen3:8b"),
         ollama_embedding_model=os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
+        ollama_temperature=_get_float("OLLAMA_TEMPERATURE", 0.2),
+        ollama_num_ctx=_get_int("OLLAMA_NUM_CTX", 4096),
         database_path=os.getenv("DATABASE_PATH", "data/eduhelper.db"),
         uploads_dir=os.getenv("UPLOADS_DIR", "data/uploads"),
         chunk_size=_get_int("CHUNK_SIZE", 800),

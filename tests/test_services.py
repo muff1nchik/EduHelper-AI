@@ -4,7 +4,7 @@ import aiosqlite
 import pytest
 
 from app.database import Database
-from app.services import EduHelperService
+from app.services import EduHelperService, _format_sources
 
 
 class FixedSplitter:
@@ -127,3 +127,37 @@ def test_add_document_with_chunks_rolls_back_chunk_write_error(tmp_path):
         assert await count_rows(str(database_path), "chunks") == 0
 
     asyncio.run(run_test())
+
+
+def test_format_sources_formats_single_source():
+    results = [{"filename": "file.pdf"}]
+
+    assert _format_sources(results) == "Источник: file.pdf"
+
+
+def test_format_sources_removes_duplicate_sources():
+    results = [
+        {"filename": "file.pdf"},
+        {"filename": "file.pdf"},
+    ]
+
+    assert _format_sources(results) == "Источник: file.pdf"
+
+
+def test_format_sources_formats_multiple_sources_as_list():
+    results = [
+        {"filename": "lecture.pdf"},
+        {"filename": "notes.txt"},
+    ]
+
+    assert _format_sources(results) == "Источники:\n- lecture.pdf\n- notes.txt"
+
+
+def test_format_sources_preserves_first_seen_order():
+    results = [
+        {"filename": "b.txt"},
+        {"filename": "a.txt"},
+        {"filename": "b.txt"},
+    ]
+
+    assert _format_sources(results) == "Источники:\n- b.txt\n- a.txt"

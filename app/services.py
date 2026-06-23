@@ -52,4 +52,24 @@ class EduHelperService:
         context_chunks = [result["content"] for result in results if result.get("content")]
         if not context_chunks:
             return "Не удалось найти релевантные фрагменты в загруженных материалах."
-        return await self.ollama_client.generate_answer(question, context_chunks)
+        answer = await self.ollama_client.generate_answer(question, context_chunks)
+        sources = _format_sources(results)
+        if sources:
+            return f"{answer}\n\n{sources}"
+        return answer
+
+
+def _format_sources(results: list[dict]) -> str:
+    filenames = []
+    for result in results:
+        filename = result.get("filename")
+        if filename and filename not in filenames:
+            filenames.append(filename)
+
+    if not filenames:
+        return ""
+    if len(filenames) == 1:
+        return f"Источник: {filenames[0]}"
+
+    sources = "\n".join(f"- {filename}" for filename in filenames)
+    return f"Источники:\n{sources}"

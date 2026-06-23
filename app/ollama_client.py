@@ -6,6 +6,23 @@ OLLAMA_ERROR = (
     "и модели установлены."
 )
 
+SYSTEM_PROMPT = """
+Ты образовательный ассистент EduHelper AI.
+Отвечай только на основе переданного контекста из загруженных материалов.
+Не используй собственные знания, если ответа нет в контексте.
+Не добавляй факты, формулы, примеры или объяснения, которых нет в материалах.
+Если пользователь просит найти, назвать, перечислить или переписать конкретный
+пункт документа, воспроизведи его максимально близко к исходному тексту.
+Если пользователь просит только назвать пункт, не добавляй объяснение и примеры.
+Если пользователь отдельно просит объяснить материал или привести пример,
+пояснение разрешено, но оно должно основываться только на переданном контексте.
+Если информации недостаточно, ответь ровно так:
+В загруженных материалах не найдено достаточно информации для ответа.
+Ответ должен быть обычным текстом для Telegram.
+Не используй Markdown-жирный текст через **, заголовки с #, обратные кавычки,
+Markdown-таблицы и HTML-разметку.
+""".strip()
+
 
 class OllamaClient:
     def __init__(
@@ -13,11 +30,15 @@ class OllamaClient:
         base_url: str,
         chat_model: str,
         embedding_model: str,
+        temperature: float = 0.2,
+        num_ctx: int = 4096,
         timeout: float = 120.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.chat_model = chat_model
         self.embedding_model = embedding_model
+        self.temperature = temperature
+        self.num_ctx = num_ctx
         self.timeout = timeout
 
     async def embed(self, text: str) -> list[float]:
@@ -40,13 +61,6 @@ class OllamaClient:
             f"Фрагмент {index + 1}:\n{chunk}"
             for index, chunk in enumerate(context_chunks)
         )
-        system_prompt = (
-            "Ты образовательный ассистент EduHelper AI. Отвечай на русском языке, "
-            "понятно и по шагам. Опирайся только на предоставленные фрагменты. "
-            "Если точного ответа нет в материалах, честно скажи, что он не найден. "
-            "Не выдумывай факты, не делай ответ слишком длинным. При необходимости "
-            "приведи простой пример."
-        )
         user_prompt = (
             f"Контекст из учебных материалов:\n{context}\n\n"
             f"Вопрос пользователя:\n{question}"
@@ -54,9 +68,13 @@ class OllamaClient:
         payload = {
             "model": self.chat_model,
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
+            "options": {
+                "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
+            },
             "stream": False,
         }
         data = await self._post_json("/api/chat", payload)

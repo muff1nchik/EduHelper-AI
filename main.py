@@ -25,6 +25,8 @@ async def main() -> None:
         base_url=settings.ollama_base_url,
         chat_model=settings.ollama_chat_model,
         embedding_model=settings.ollama_embedding_model,
+        temperature=settings.ollama_temperature,
+        num_ctx=settings.ollama_num_ctx,
     )
     splitter = TextSplitter(settings.chunk_size, settings.chunk_overlap)
     search_engine = VectorSearch()
