@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.loaders import get_loader
 from app.messages import INSUFFICIENT_INFORMATION_MESSAGE
 
@@ -71,6 +73,22 @@ class EduHelperService:
         if document is None:
             return "Документ с таким ID не найден."
         return f"Активный материал: {document['filename']}"
+
+    async def delete_document(self, user_id: int, document_id: int) -> str:
+        document = await self.database.delete_document(user_id, document_id)
+        if document is None:
+            return "Документ с таким ID не найден."
+
+        file_path = Path(document["file_path"])
+        try:
+            if file_path.exists() and file_path.is_file():
+                file_path.unlink()
+        except OSError:
+            return (
+                f"Материал удалён: {document['filename']}. "
+                "Но файл на диске удалить не удалось."
+            )
+        return f"Материал удалён: {document['filename']}"
 
     async def list_documents(self, user_id: int) -> str:
         documents = await self.database.get_user_documents(user_id)

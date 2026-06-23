@@ -34,7 +34,8 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             "/help — помощь\n"
             "/clear — очистить загруженные материалы\n"
             "/documents — список загруженных материалов\n"
-            "/use ID — выбрать активный материал"
+            "/use ID — выбрать активный материал\n"
+            "/delete ID — удалить материал"
         )
 
     @router.message(Command("clear"))
@@ -73,6 +74,30 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             return
 
         answer = await service.use_document(message.from_user.id, document_id)
+        await message.answer(answer)
+
+    @router.message(Command("delete"))
+    async def delete_document(message: Message) -> None:
+        if message.from_user is None:
+            await message.answer("Не удалось определить пользователя.")
+            return
+
+        parts = (message.text or "").split()
+        if len(parts) != 2:
+            await message.answer("Использование: /delete ID")
+            return
+
+        try:
+            document_id = int(parts[1])
+        except ValueError:
+            await message.answer("Использование: /delete ID")
+            return
+
+        if document_id <= 0:
+            await message.answer("Использование: /delete ID")
+            return
+
+        answer = await service.delete_document(message.from_user.id, document_id)
         await message.answer(answer)
 
     @router.message(F.document)

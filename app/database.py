@@ -276,6 +276,82 @@ class Database:
             row = await cursor.fetchone()
         return dict(row) if row is not None else None
 
+    async def delete_document(self, user_id: int, document_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute("PRAGMA foreign_keys = ON")
+            try:
+                await db.execute("BEGIN")
+                cursor = await db.execute(
+                    """
+                    SELECT id, filename, file_path
+                    FROM documents
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (document_id, user_id),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await db.rollback()
+                    return None
+
+                cursor = await db.execute(
+                    """
+                    SELECT active_document_id
+                    FROM user_state
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+                state_row = await cursor.fetchone()
+                is_active = (
+                    state_row is not None
+                    and state_row["active_document_id"] == document_id
+                )
+
+                await db.execute(
+                    "DELETE FROM chunks WHERE user_id = ? AND document_id = ?",
+                    (user_id, document_id),
+                )
+                await db.execute(
+                    "DELETE FROM documents WHERE id = ? AND user_id = ?",
+                    (document_id, user_id),
+                )
+
+                if is_active:
+                    cursor = await db.execute(
+                        """
+                        SELECT id
+                        FROM documents
+                        WHERE user_id = ?
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (user_id,),
+                    )
+                    next_document = await cursor.fetchone()
+                    if next_document is None:
+                        await db.execute(
+                            "DELETE FROM user_state WHERE user_id = ?",
+                            (user_id,),
+                        )
+                    else:
+                        await db.execute(
+                            """
+                            INSERT INTO user_state (user_id, active_document_id)
+                            VALUES (?, ?)
+                            ON CONFLICT(user_id) DO UPDATE SET
+                                active_document_id = excluded.active_document_id
+                            """,
+                            (user_id, next_document["id"]),
+                        )
+
+                await db.commit()
+                return dict(row)
+            except Exception:
+                await db.rollback()
+                raise
+
     async def clear_user_data(self, user_id: int) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("PRAGMA foreign_keys = ON")

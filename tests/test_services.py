@@ -144,12 +144,26 @@ async def add_document_with_chunks(
     user_id: int,
     filename: str,
     chunks: list[dict],
+    file_path: str | None = None,
 ) -> int:
     return await database.add_document_with_chunks(
         user_id=user_id,
         filename=filename,
-        file_path=f"data/uploads/{filename}",
+        file_path=file_path or f"data/uploads/{filename}",
         chunks=chunks,
+    )
+
+
+def make_real_question_service(
+    database: Database,
+    ollama_client: FakeAnswerOllamaClient | None = None,
+) -> EduHelperService:
+    return EduHelperService(
+        settings=SimpleNamespace(top_k=4),
+        database=database,
+        ollama_client=ollama_client or FakeAnswerOllamaClient(),
+        splitter=None,
+        search_engine=VectorSearch(min_similarity=-1.0),
     )
 
 
@@ -573,6 +587,168 @@ def test_changing_active_document_changes_source_and_context(tmp_path):
         assert first_answer.endswith("Источник: first.pdf")
         assert ollama_client.context_chunks == ["Второй материал"]
         assert second_answer.endswith("Источник: second.pdf")
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_service_removes_existing_physical_file(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        file_path = tmp_path / "uploads" / "lesson.pdf"
+        file_path.parent.mkdir()
+        file_path.write_text("content", encoding="utf-8")
+        document_id = await add_document_with_chunks(
+            database,
+            123,
+            "lesson.pdf",
+            [
+                {
+                    "content": "Материал",
+                    "embedding": [1.0, 0.0],
+                    "chunk_index": 0,
+                }
+            ],
+            file_path=str(file_path),
+        )
+        service = make_real_question_service(database)
+
+        answer = await service.delete_document(123, document_id)
+
+        assert answer == "Материал удалён: lesson.pdf"
+        assert not file_path.exists()
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_service_ignores_missing_physical_file(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        missing_path = tmp_path / "uploads" / "missing.pdf"
+        document_id = await add_document_with_chunks(
+            database,
+            123,
+            "missing.pdf",
+            [
+                {
+                    "content": "Материал",
+                    "embedding": [1.0, 0.0],
+                    "chunk_index": 0,
+                }
+            ],
+            file_path=str(missing_path),
+        )
+        service = make_real_question_service(database)
+
+        answer = await service.delete_document(123, document_id)
+
+        assert answer == "Материал удалён: missing.pdf"
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_service_returns_not_found_for_other_user_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        other_id = await add_document_with_chunks(
+            database,
+            456,
+            "other.pdf",
+            [
+                {
+                    "content": "Чужой материал",
+                    "embedding": [1.0, 0.0],
+                    "chunk_index": 0,
+                }
+            ],
+        )
+        service = make_real_question_service(database)
+
+        answer = await service.delete_document(123, other_id)
+
+        assert answer == "Документ с таким ID не найден."
+
+    asyncio.run(run_test())
+
+
+def test_list_documents_after_delete_does_not_show_deleted_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        first_id = await add_document_with_chunks(
+            database,
+            123,
+            "first.pdf",
+            [
+                {
+                    "content": "Первый материал",
+                    "embedding": [1.0, 0.0],
+                    "chunk_index": 0,
+                }
+            ],
+        )
+        await add_document_with_chunks(
+            database,
+            123,
+            "second.pdf",
+            [
+                {
+                    "content": "Второй материал",
+                    "embedding": [1.0, 0.0],
+                    "chunk_index": 0,
+                }
+            ],
+        )
+        service = make_real_question_service(database)
+
+        await service.delete_document(123, first_id)
+        documents_text = await service.list_documents(123)
+
+        assert "first.pdf" not in documents_text
+        assert "second.pdf" in documents_text
+
+    asyncio.run(run_test())
+
+
+def test_answer_question_after_deleting_active_document_uses_new_active_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        first_id = await add_document_with_chunks(
+            database,
+            123,
+            "first.pdf",
+            [
+                {
+                    "content": "Первый материал",
+                    "embedding": [1.0, 0.0],
+                    "chunk_index": 0,
+                }
+            ],
+        )
+        await add_document_with_chunks(
+            database,
+            123,
+            "second.pdf",
+            [
+                {
+                    "content": "Второй материал",
+                    "embedding": [1.0, 0.0],
+                    "chunk_index": 0,
+                }
+            ],
+        )
+        await database.set_active_document(123, first_id)
+        ollama_client = FakeAnswerOllamaClient()
+        service = make_real_question_service(database, ollama_client)
+
+        await service.delete_document(123, first_id)
+        answer = await service.answer_question(123, "Что в материале?")
+
+        assert ollama_client.context_chunks == ["Второй материал"]
+        assert answer.endswith("Источник: second.pdf")
 
     asyncio.run(run_test())
 

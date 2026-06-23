@@ -16,6 +16,7 @@ async def add_document_with_chunks(
     user_id: int,
     filename: str,
     contents: list[str],
+    file_path: str | None = None,
 ) -> int:
     chunks = [
         {
@@ -28,7 +29,7 @@ async def add_document_with_chunks(
     return await database.add_document_with_chunks(
         user_id=user_id,
         filename=filename,
-        file_path=f"data/uploads/{filename}",
+        file_path=file_path or f"data/uploads/{filename}",
         chunks=chunks,
     )
 
@@ -214,5 +215,124 @@ def test_get_user_documents_contains_id_and_filename(tmp_path):
         documents = await database.get_user_documents(123)
 
         assert documents == [{"id": document_id, "filename": "lesson.pdf"}]
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_removes_current_user_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        document_id = await add_document_with_chunks(database, 123, "own.pdf", ["own"])
+
+        deleted = await database.delete_document(123, document_id)
+        documents = await database.get_user_documents(123)
+
+        assert deleted["id"] == document_id
+        assert deleted["filename"] == "own.pdf"
+        assert documents == []
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_removes_selected_document_chunks(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        document_id = await add_document_with_chunks(database, 123, "own.pdf", ["a", "b"])
+
+        await database.delete_document(123, document_id)
+
+        assert await database.get_document_chunks(123, document_id) == []
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_keeps_other_document_chunks(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        first_id = await add_document_with_chunks(database, 123, "first.pdf", ["first"])
+        second_id = await add_document_with_chunks(database, 123, "second.pdf", ["second"])
+
+        await database.delete_document(123, second_id)
+        chunks = await database.get_document_chunks(123, first_id)
+
+        assert [chunk["content"] for chunk in chunks] == ["first"]
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_rejects_other_user_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        other_id = await add_document_with_chunks(database, 456, "other.pdf", ["secret"])
+
+        deleted = await database.delete_document(123, other_id)
+        documents = await database.get_user_documents(456)
+
+        assert deleted is None
+        assert documents == [{"id": other_id, "filename": "other.pdf"}]
+
+    asyncio.run(run_test())
+
+
+def test_delete_document_returns_none_for_missing_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+
+        deleted = await database.delete_document(123, 999)
+
+        assert deleted is None
+
+    asyncio.run(run_test())
+
+
+def test_delete_inactive_document_keeps_active_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        active_id = await add_document_with_chunks(database, 123, "active.pdf", ["active"])
+        inactive_id = await add_document_with_chunks(database, 123, "inactive.pdf", ["inactive"])
+        await database.set_active_document(123, active_id)
+
+        await database.delete_document(123, inactive_id)
+        active_document = await database.get_active_document(123)
+
+        assert active_document == {"id": active_id, "filename": "active.pdf"}
+
+    asyncio.run(run_test())
+
+
+def test_delete_active_document_selects_newest_remaining_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        first_id = await add_document_with_chunks(database, 123, "first.pdf", ["first"])
+        second_id = await add_document_with_chunks(database, 123, "second.pdf", ["second"])
+        third_id = await add_document_with_chunks(database, 123, "third.pdf", ["third"])
+        await database.set_active_document(123, second_id)
+
+        await database.delete_document(123, second_id)
+        active_document = await database.get_active_document(123)
+
+        assert active_document == {"id": third_id, "filename": "third.pdf"}
+        assert active_document["id"] != first_id
+
+    asyncio.run(run_test())
+
+
+def test_delete_last_document_clears_active_document(tmp_path):
+    async def run_test() -> None:
+        database = Database(str(tmp_path / "eduhelper.db"))
+        await database.init()
+        document_id = await add_document_with_chunks(database, 123, "only.pdf", ["only"])
+
+        await database.delete_document(123, document_id)
+        active_document = await database.get_active_document(123)
+
+        assert active_document is None
 
     asyncio.run(run_test())
