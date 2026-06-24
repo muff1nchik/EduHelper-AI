@@ -8,7 +8,7 @@ from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 
 
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
 
 
 def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
@@ -19,14 +19,14 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
     async def start(message: Message) -> None:
         await message.answer(
             "Привет! Я EduHelper AI — локальный образовательный ИИ-ассистент. "
-            "Загрузи PDF, TXT или MD файл, а потом задай вопрос по материалу."
+            "Загрузи PDF, TXT, MD или DOCX файл, а потом задай вопрос по материалу."
         )
 
     @router.message(Command("help"))
     async def help_command(message: Message) -> None:
         await message.answer(
             "Как пользоваться:\n"
-            "1. Отправьте PDF, TXT или MD файл.\n"
+            "1. Отправьте PDF, TXT, MD или DOCX файл.\n"
             "2. Дождитесь обработки.\n"
             "3. Задайте вопрос по материалу.\n"
             "Команды:\n"
@@ -107,7 +107,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
         extension = Path(original_name).suffix.lower()
 
         if extension not in SUPPORTED_EXTENSIONS:
-            await message.answer("Поддерживаются только файлы PDF, TXT и MD.")
+            await message.answer("Поддерживаются только файлы PDF, TXT, MD и DOCX.")
             return
 
         uploads_path.mkdir(parents=True, exist_ok=True)
