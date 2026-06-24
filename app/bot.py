@@ -40,8 +40,8 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("clear"))
     async def clear(message: Message) -> None:
-        await database.clear_user_data(message.from_user.id)
-        await message.answer("Ваши загруженные материалы очищены.")
+        answer = await service.clear_user_data(message.from_user.id)
+        await message.answer(answer)
 
     @router.message(Command("documents"))
     async def documents(message: Message) -> None:

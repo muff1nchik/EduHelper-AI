@@ -352,12 +352,30 @@ class Database:
                 await db.rollback()
                 raise
 
-    async def clear_user_data(self, user_id: int) -> None:
+    async def clear_user_data(self, user_id: int) -> list[str]:
         async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA foreign_keys = ON")
-            await db.execute("DELETE FROM chunks WHERE user_id = ?", (user_id,))
-            await db.execute("DELETE FROM documents WHERE user_id = ?", (user_id,))
-            await db.commit()
+            try:
+                await db.execute("BEGIN")
+                cursor = await db.execute(
+                    """
+                    SELECT file_path
+                    FROM documents
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+
+                await db.execute("DELETE FROM chunks WHERE user_id = ?", (user_id,))
+                await db.execute("DELETE FROM documents WHERE user_id = ?", (user_id,))
+                await db.execute("DELETE FROM user_state WHERE user_id = ?", (user_id,))
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+        return [row["file_path"] for row in rows]
 
     async def user_has_chunks(self, user_id: int) -> bool:
         async with aiosqlite.connect(self.path) as db:

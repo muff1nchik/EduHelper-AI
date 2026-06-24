@@ -20,30 +20,37 @@ class EduHelperService:
         self.search_engine = search_engine
 
     async def process_file(self, user_id: int, file_path: str, filename: str) -> int:
-        loader = get_loader(file_path)
-        text = loader.load_text(file_path)
-        chunks = self.splitter.split(text)
-        if not chunks:
-            raise ValueError("Документ пустой после очистки текста.")
+        saved = False
+        try:
+            loader = get_loader(file_path)
+            text = loader.load_text(file_path)
+            chunks = self.splitter.split(text)
+            if not chunks:
+                raise ValueError("Документ пустой после очистки текста.")
 
-        prepared_chunks = []
-        for index, chunk in enumerate(chunks):
-            embedding = await self.ollama_client.embed(chunk)
-            prepared_chunks.append(
-                {
-                    "content": chunk,
-                    "embedding": embedding,
-                    "chunk_index": index,
-                }
+            prepared_chunks = []
+            for index, chunk in enumerate(chunks):
+                embedding = await self.ollama_client.embed(chunk)
+                prepared_chunks.append(
+                    {
+                        "content": chunk,
+                        "embedding": embedding,
+                        "chunk_index": index,
+                    }
+                )
+
+            await self.database.add_document_with_chunks(
+                user_id=user_id,
+                filename=filename,
+                file_path=file_path,
+                chunks=prepared_chunks,
             )
-
-        await self.database.add_document_with_chunks(
-            user_id=user_id,
-            filename=filename,
-            file_path=file_path,
-            chunks=prepared_chunks,
-        )
-        return len(chunks)
+            saved = True
+            return len(chunks)
+        except Exception:
+            if not saved:
+                _delete_file(Path(file_path))
+            raise
 
     async def answer_question(self, user_id: int, question: str) -> str:
         active_document = await self.database.get_active_document(user_id)
@@ -79,16 +86,18 @@ class EduHelperService:
         if document is None:
             return "Документ с таким ID не найден."
 
-        file_path = Path(document["file_path"])
-        try:
-            if file_path.exists() and file_path.is_file():
-                file_path.unlink()
-        except OSError:
+        if not _delete_file(Path(document["file_path"])):
             return (
                 f"Материал удалён: {document['filename']}. "
                 "Но файл на диске удалить не удалось."
             )
         return f"Материал удалён: {document['filename']}"
+
+    async def clear_user_data(self, user_id: int) -> str:
+        file_paths = await self.database.clear_user_data(user_id)
+        if _delete_files(file_paths):
+            return "Ваши загруженные материалы очищены."
+        return "Материалы очищены, но не удалось удалить некоторые файлы с диска."
 
     async def list_documents(self, user_id: int) -> str:
         documents = await self.database.get_user_documents(user_id)
@@ -120,3 +129,24 @@ def _format_sources(results: list[dict]) -> str:
 
     sources = "\n".join(f"- {filename}" for filename in filenames)
     return f"Источники:\n{sources}"
+
+
+def _delete_file(file_path: Path) -> bool:
+    try:
+        if file_path.exists() and file_path.is_file():
+            file_path.unlink()
+    except OSError:
+        return False
+    return True
+
+
+def _delete_files(file_paths: list[str]) -> bool:
+    success = True
+    seen_paths = set()
+    for file_path in file_paths:
+        if file_path in seen_paths:
+            continue
+        seen_paths.add(file_path)
+        if not _delete_file(Path(file_path)):
+            success = False
+    return success
