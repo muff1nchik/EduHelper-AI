@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 from app.messages import INSUFFICIENT_INFORMATION_MESSAGE
@@ -88,6 +90,39 @@ class OllamaClient:
         if not content:
             raise RuntimeError("Ollama вернула пустой ответ.")
         return str(content).strip()
+
+    async def generate_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: dict,
+    ) -> dict:
+        payload = {
+            "model": self.chat_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "options": {
+                "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
+            },
+            "format": schema,
+            "stream": False,
+        }
+        data = await self._post_json("/api/chat", payload)
+
+        message = data.get("message", {})
+        content = message.get("content") if isinstance(message, dict) else None
+        if not content:
+            raise RuntimeError("Ollama вернула пустой ответ.")
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Ollama вернула некорректный JSON.") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("Ollama вернула JSON не в виде объекта.")
+        return result
 
     async def _post_json(self, path: str, payload: dict) -> dict:
         try:
