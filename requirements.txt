@@ -4,4 +4,3 @@ httpx
 python-dotenv
 PyMuPDF
 python-docx
-pytest

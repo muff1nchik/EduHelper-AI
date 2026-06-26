@@ -3,6 +3,7 @@ import json
 import httpx
 
 from app.messages import INSUFFICIENT_INFORMATION_MESSAGE
+from app.text_utils import clean_model_output
 
 
 OLLAMA_ERROR = (
@@ -25,6 +26,11 @@ SYSTEM_PROMPT = """
 Ответ должен быть обычным текстом для Telegram.
 Не используй Markdown-жирный текст через **, заголовки с #, обратные кавычки,
 Markdown-таблицы и HTML-разметку.
+Сначала отвечай прямо на вопрос, затем при необходимости добавляй краткое пояснение.
+Корректно распознанный LaTeX переводи в читаемую текстовую запись и не выводи
+лишние символы $.
+Если формула в контексте явно повреждена, не восстанавливай её догадкой:
+дай словесное объяснение по доступному тексту.
 """.format(
     insufficient_information_message=INSUFFICIENT_INFORMATION_MESSAGE
 ).strip()
@@ -89,7 +95,7 @@ class OllamaClient:
         content = message.get("content") if isinstance(message, dict) else None
         if not content:
             raise RuntimeError("Ollama вернула пустой ответ.")
-        return str(content).strip()
+        return clean_model_output(str(content))
 
     async def generate_structured(
         self,

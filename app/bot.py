@@ -381,6 +381,7 @@ async def _handle_quiz_answer(
         result = await service.evaluate_quiz_answer(
             question.question,
             question.reference_answer,
+            question.evidence_quote,
             question.source_context,
             text,
         )

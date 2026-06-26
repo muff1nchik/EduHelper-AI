@@ -5,7 +5,6 @@ __pycache__/
 data/eduhelper.db
 data/uploads/*
 !data/uploads/.gitkeep
-.pytest_cache/
 .DS_Store
 
-tests/
+*.log

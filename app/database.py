@@ -149,6 +149,7 @@ class Database:
                 SELECT
                     chunks.id AS chunk_id,
                     chunks.document_id,
+                    chunks.chunk_index,
                     documents.filename,
                     chunks.content,
                     chunks.embedding
@@ -179,6 +180,7 @@ class Database:
                 SELECT
                     chunks.id AS chunk_id,
                     chunks.document_id,
+                    chunks.chunk_index,
                     documents.filename,
                     chunks.content,
                     chunks.embedding

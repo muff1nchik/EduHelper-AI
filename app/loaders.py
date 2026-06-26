@@ -4,6 +4,8 @@ from pathlib import Path
 from docx import Document
 import fitz
 
+from app.text_utils import normalize_document_text
+
 
 class BaseLoader(ABC):
     @abstractmethod
@@ -11,6 +13,7 @@ class BaseLoader(ABC):
         """Извлечь текст из файла."""
 
     def _ensure_not_empty(self, text: str) -> str:
+        text = normalize_document_text(text)
         if not text or not text.strip():
             raise ValueError("Документ пустой или не содержит текстового слоя.")
         return text
@@ -29,7 +32,7 @@ class PdfLoader(BaseLoader):
     def load_text(self, file_path: str) -> str:
         try:
             with fitz.open(file_path) as document:
-                text = "\n".join(page.get_text("text") for page in document)
+                text = "\n\n".join(page.get_text("text") for page in document)
         except Exception as exc:
             raise ValueError("Не удалось прочитать PDF-файл.") from exc
         return self._ensure_not_empty(text)
