@@ -85,7 +85,7 @@ CAPABILITIES_PHRASES = {
 
 
 def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
-    """Создаёт dispatcher и регистрирует обработчики Telegram."""
+    """Создаёт диспетчер и регистрирует обработчики Telegram."""
     router = Router()
     uploads_path = Path(uploads_dir)
     quiz_sessions: dict[int, QuizSession] = {}
@@ -116,7 +116,8 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             "/use ID — выбрать активный материал\n"
             "/delete ID — удалить материал\n"
             "/summary — создать конспект активного материала\n"
-            "/quiz [N] — начать викторину по активному документу, по умолчанию 5 вопросов\n"
+            "/quiz [N] — начать викторину по активному документу, "
+            "по умолчанию 5 вопросов\n"
             "/stopquiz — остановить текущую викторину"
         )
 
@@ -144,18 +145,8 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             await message.answer("Не удалось определить пользователя.")
             return
 
-        parts = (message.text or "").split()
-        if len(parts) != 2:
-            await message.answer("Использование: /use ID")
-            return
-
-        try:
-            document_id = int(parts[1])
-        except ValueError:
-            await message.answer("Использование: /use ID")
-            return
-
-        if document_id <= 0:
+        document_id = _parse_document_id(message.text or "")
+        if document_id is None:
             await message.answer("Использование: /use ID")
             return
 
@@ -171,24 +162,18 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             await message.answer("Не удалось определить пользователя.")
             return
 
-        parts = (message.text or "").split()
-        if len(parts) != 2:
-            await message.answer("Использование: /delete ID")
-            return
-
-        try:
-            document_id = int(parts[1])
-        except ValueError:
-            await message.answer("Использование: /delete ID")
-            return
-
-        if document_id <= 0:
+        document_id = _parse_document_id(message.text or "")
+        if document_id is None:
             await message.answer("Использование: /delete ID")
             return
 
         session = quiz_sessions.get(message.from_user.id)
         answer = await service.delete_document(message.from_user.id, document_id)
-        if answer.startswith("Материал удалён:") and session and session.document_id == document_id:
+        if (
+            answer.startswith("Материал удалён:")
+            and session
+            and session.document_id == document_id
+        ):
             _clear_quiz_state(message.from_user.id, quiz_sessions, quiz_starting)
         await message.answer(answer)
 
@@ -202,7 +187,9 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
         user_id = message.from_user.id
         question_count = _parse_quiz_question_count(message.text or "")
         if question_count is None:
-            await message.answer("Использование: /quiz [количество вопросов от 1 до 10].")
+            await message.answer(
+                "Использование: /quiz [количество вопросов от 1 до 10]."
+            )
             return
         if user_id in quiz_starting:
             await message.answer("Викторина уже создаётся. Подождите немного.")
@@ -284,7 +271,10 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
         local_path = uploads_path / f"{message.from_user.id}_{timestamp}_{safe_name}"
 
         try:
-            async with ChatActionSender.upload_document(bot=bot, chat_id=message.chat.id):
+            async with ChatActionSender.upload_document(
+                bot=bot,
+                chat_id=message.chat.id,
+            ):
                 await bot.download(document, destination=local_path)
             await message.answer("Файл получен. Обрабатываю материал...")
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
@@ -293,7 +283,11 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
                     file_path=str(local_path),
                     filename=original_name,
                 )
-            stopped_quiz = _clear_quiz_state(message.from_user.id, quiz_sessions, quiz_starting)
+            stopped_quiz = _clear_quiz_state(
+                message.from_user.id,
+                quiz_sessions,
+                quiz_starting,
+            )
             suffix = "\nПредыдущая викторина остановлена." if stopped_quiz else ""
             await message.answer(
                 f"Файл обработан. Добавлено {chunks_count} фрагментов. "
@@ -305,7 +299,9 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             await message.answer(str(exc))
         except Exception:
             logging.exception("Ошибка обработки документа")
-            await message.answer("Не удалось обработать файл. Проверьте формат и попробуйте еще раз.")
+            await message.answer(
+                "Не удалось обработать файл. Проверьте формат и попробуйте еще раз."
+            )
 
     @router.message(F.text)
     async def handle_question(message: Message, bot: Bot) -> None:
@@ -488,6 +484,20 @@ def _parse_quiz_question_count(text: str) -> int | None:
     return question_count
 
 
+def _parse_document_id(text: str) -> int | None:
+    """Читает положительный ID документа из команды."""
+    parts = text.split()
+    if len(parts) != 2:
+        return None
+    try:
+        document_id = int(parts[1])
+    except ValueError:
+        return None
+    if document_id <= 0:
+        return None
+    return document_id
+
+
 def _clear_quiz_state(
     user_id: int,
     quiz_sessions: dict[int, QuizSession],
@@ -501,7 +511,7 @@ def _clear_quiz_state(
 
 
 async def run_bot(token: str, dispatcher: Dispatcher) -> None:
-    """Запускает polling Telegram-бота."""
+    """Запускает получение обновлений Telegram-ботом."""
     bot = Bot(token=token)
     await dispatcher.start_polling(bot)
 

@@ -61,7 +61,11 @@ class TextSplitter:
 
     def _build_blocks(self, text: str) -> list[str]:
         """Собирает абзацы и присоединяет короткие заголовки к тексту."""
-        paragraphs = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
+        paragraphs = [
+            block.strip()
+            for block in re.split(r"\n\s*\n", text)
+            if block.strip()
+        ]
         blocks: list[str] = []
         pending_heading = ""
         for index, paragraph in enumerate(paragraphs):
@@ -224,7 +228,10 @@ class TextSplitter:
         if self.overlap <= 0 or not previous:
             return ""
         tail = previous[-self.overlap:].strip()
-        sentence_match = re.search(r"([^.!?…]{1,%d}[.!?…])\s*$" % self.overlap, previous)
+        sentence_match = re.search(
+            r"([^.!?…]{1,%d}[.!?…])\s*$" % self.overlap,
+            previous,
+        )
         if sentence_match:
             tail = sentence_match.group(1).strip()
         if len(tail) > self.chunk_size // 3:
@@ -235,7 +242,11 @@ class TextSplitter:
         """Удаляет почти одинаковые соседние чанки."""
         result: list[str] = []
         for chunk in chunks:
-            if result and (chunk == result[-1] or chunk in result[-1] or result[-1] in chunk):
+            if result and (
+                chunk == result[-1]
+                or chunk in result[-1]
+                or result[-1] in chunk
+            ):
                 shorter = min(len(chunk), len(result[-1]))
                 longer = max(len(chunk), len(result[-1]))
                 if shorter / longer > 0.85:

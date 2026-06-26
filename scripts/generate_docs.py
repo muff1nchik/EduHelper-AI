@@ -1,8 +1,8 @@
 """Создаёт HTML-документацию проекта через pydoc."""
 
-from pathlib import Path
 import pydoc
 import sys
+from pathlib import Path
 
 
 def main() -> None:

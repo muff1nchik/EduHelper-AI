@@ -1,7 +1,7 @@
 """Работает с документами и настройками пользователей в SQLite."""
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -121,7 +121,14 @@ class Database:
                     await db.execute(
                         """
                         INSERT INTO chunks
-                            (document_id, user_id, chunk_index, content, embedding, created_at)
+                            (
+                                document_id,
+                                user_id,
+                                chunk_index,
+                                content,
+                                embedding,
+                                created_at
+                            )
                         VALUES (?, ?, ?, ?, ?, ?)
                         """,
                         (
@@ -171,15 +178,7 @@ class Database:
             )
             rows = await cursor.fetchall()
 
-        chunks = []
-        for row in rows:
-            item = dict(row)
-            try:
-                item["embedding"] = json.loads(item["embedding"])
-            except json.JSONDecodeError as exc:
-                raise RuntimeError("В базе найден некорректный embedding.") from exc
-            chunks.append(item)
-        return chunks
+        return self._rows_with_embeddings(rows)
 
     async def get_document_chunks(self, user_id: int, document_id: int) -> list[dict]:
         """Возвращает фрагменты выбранного документа пользователя."""
@@ -205,15 +204,7 @@ class Database:
             )
             rows = await cursor.fetchall()
 
-        chunks = []
-        for row in rows:
-            item = dict(row)
-            try:
-                item["embedding"] = json.loads(item["embedding"])
-            except json.JSONDecodeError as exc:
-                raise RuntimeError("В базе найден некорректный embedding.") from exc
-            chunks.append(item)
-        return chunks
+        return self._rows_with_embeddings(rows)
 
     async def get_user_documents(self, user_id: int) -> list[dict]:
         """Возвращает список документов пользователя от новых к старым."""
@@ -407,3 +398,15 @@ class Database:
     def _now(self) -> str:
         """Возвращает текущее время в формате для базы."""
         return datetime.now(timezone.utc).isoformat()
+
+    def _rows_with_embeddings(self, rows: list[aiosqlite.Row]) -> list[dict]:
+        """Преобразует строки чанков и читает embedding из JSON."""
+        chunks = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["embedding"] = json.loads(item["embedding"])
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("В базе найден некорректный embedding.") from exc
+            chunks.append(item)
+        return chunks

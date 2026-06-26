@@ -25,7 +25,9 @@ class VectorSearch:
     def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """Считает косинусную похожесть двух векторов."""
         if not vec1 or not vec2 or len(vec1) != len(vec2):
-            raise ValueError("Embeddings должны быть непустыми векторами одинаковой длины.")
+            raise ValueError(
+                "Embeddings должны быть непустыми векторами одинаковой длины."
+            )
 
         dot = sum(a * b for a, b in zip(vec1, vec2))
         norm1 = math.sqrt(sum(a * a for a in vec1))
@@ -117,7 +119,13 @@ def _lexical_evidence(query: dict, content: str) -> dict:
     heading_match = _heading_matches(query["token_set"], content)
     majority_match = len(query["token_set"]) >= 2 and coverage >= 0.66
 
-    strong = exact_phrase or technical_match or structural_match or heading_match or majority_match
+    strong = (
+        exact_phrase
+        or technical_match
+        or structural_match
+        or heading_match
+        or majority_match
+    )
     if exact_phrase or structural_match:
         bonus = LEXICAL_EXACT_PHRASE_BONUS
     elif strong:
@@ -164,7 +172,11 @@ def _with_neighbor_context(chunks: list[dict], main_results: list[dict]) -> list
     }
     current_length = 0
 
-    def add_chunk(chunk: dict, base: dict | None = None, neighbor: bool = False) -> None:
+    def add_chunk(
+        chunk: dict,
+        base: dict | None = None,
+        neighbor: bool = False,
+    ) -> None:
         """Добавляет фрагмент в итоговый контекст без дублей."""
         nonlocal current_length
         key = (chunk.get("document_id"), chunk.get("chunk_index"))

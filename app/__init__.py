@@ -1,1 +1,1 @@
-"""EduHelper AI package."""
+"""Содержит основные модули EduHelper AI."""

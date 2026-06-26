@@ -144,7 +144,11 @@ class OllamaClient:
                 response = await client.post(f"{self.base_url}{path}", json=payload)
                 response.raise_for_status()
                 return response.json()
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+        ) as exc:
             raise RuntimeError(OLLAMA_ERROR) from exc
         except httpx.HTTPError as exc:
             raise RuntimeError(OLLAMA_ERROR) from exc

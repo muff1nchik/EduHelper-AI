@@ -2,8 +2,8 @@
 
 import asyncio
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from app.bot import create_dispatcher, run_bot
 from app.config import load_settings

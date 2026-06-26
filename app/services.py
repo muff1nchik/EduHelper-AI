@@ -403,14 +403,25 @@ class EduHelperService:
                 query_text=search_question,
             )
         except TypeError:
-            results = self.search_engine.search(chunks, query_embedding, self.settings.top_k)
+            results = self.search_engine.search(
+                chunks,
+                query_embedding,
+                self.settings.top_k,
+            )
         if not results:
             return INSUFFICIENT_INFORMATION_MESSAGE
 
-        context_chunks = [result["content"] for result in results if result.get("content")]
+        context_chunks = [
+            result["content"]
+            for result in results
+            if result.get("content")
+        ]
         if not context_chunks:
             return INSUFFICIENT_INFORMATION_MESSAGE
-        answer = await self.ollama_client.generate_answer(model_question, context_chunks)
+        answer = await self.ollama_client.generate_answer(
+            model_question,
+            context_chunks,
+        )
         if answer.strip() == INSUFFICIENT_INFORMATION_MESSAGE:
             return INSUFFICIENT_INFORMATION_MESSAGE
 
@@ -438,13 +449,19 @@ class EduHelperService:
                 active_document["id"],
             )
             try:
-                summary = await self.ollama_client.generate_answer(SUMMARY_PROMPT, chunk_texts)
+                summary = await self.ollama_client.generate_answer(
+                    SUMMARY_PROMPT,
+                    chunk_texts,
+                )
             except RuntimeError:
                 logger.exception("Ошибка single-pass summary")
                 return SUMMARY_ERROR_MESSAGE
             if summary.strip() == INSUFFICIENT_INFORMATION_MESSAGE:
                 return INSUFFICIENT_INFORMATION_MESSAGE
-            return f"{clean_model_output(summary)}\n\nИсточник: {active_document['filename']}"
+            return (
+                f"{clean_model_output(summary)}\n\n"
+                f"Источник: {active_document['filename']}"
+            )
 
         logger.debug(
             "Summary batched: user_id=%s document_id=%s chunks=%s",
@@ -464,8 +481,13 @@ class EduHelperService:
         try:
             for index, batch in enumerate(batches, start=1):
                 logger.debug("Summary map batch %s/%s", index, len(batches))
-                result = await self.ollama_client.generate_answer(SUMMARY_MAP_PROMPT, batch)
-                map_summaries.append(clean_model_output(result)[:SUMMARY_PART_MAX_CHARS])
+                result = await self.ollama_client.generate_answer(
+                    SUMMARY_MAP_PROMPT,
+                    batch,
+                )
+                map_summaries.append(
+                    clean_model_output(result)[:SUMMARY_PART_MAX_CHARS]
+                )
             return await self._reduce_summaries(map_summaries)
         except RuntimeError:
             logger.exception("Ошибка map/reduce summary")
@@ -475,18 +497,31 @@ class EduHelperService:
         """Объединяет промежуточные конспекты в итоговый текст."""
         reduce_batches = _make_text_batches(summaries, SUMMARY_REDUCE_MAX_CHARS)
         if len(reduce_batches) == 1:
-            result = await self.ollama_client.generate_answer(SUMMARY_REDUCE_PROMPT, reduce_batches[0])
+            result = await self.ollama_client.generate_answer(
+                SUMMARY_REDUCE_PROMPT,
+                reduce_batches[0],
+            )
             return clean_model_output(result)
 
         partial_reduces = []
         for index, batch in enumerate(reduce_batches, start=1):
             logger.debug("Summary reduce batch %s/%s", index, len(reduce_batches))
-            partial = await self.ollama_client.generate_answer(SUMMARY_REDUCE_PROMPT, batch)
+            partial = await self.ollama_client.generate_answer(
+                SUMMARY_REDUCE_PROMPT,
+                batch,
+            )
             partial_reduces.append(clean_model_output(partial)[:SUMMARY_PART_MAX_CHARS])
-        final = await self.ollama_client.generate_answer(SUMMARY_REDUCE_PROMPT, partial_reduces)
+        final = await self.ollama_client.generate_answer(
+            SUMMARY_REDUCE_PROMPT,
+            partial_reduces,
+        )
         return clean_model_output(final)
 
-    async def generate_quiz(self, user_id: int, question_count: int) -> QuizSession | str:
+    async def generate_quiz(
+        self,
+        user_id: int,
+        question_count: int,
+    ) -> QuizSession | str:
         """Создаёт викторину по активному документу."""
         active_document = await self.database.get_active_document(user_id)
         if active_document is None:
@@ -494,7 +529,8 @@ class EduHelperService:
 
         chunks = await self.database.get_document_chunks(user_id, active_document["id"])
         filtered_count = sum(
-            1 for chunk in chunks
+            1
+            for chunk in chunks
             if chunk.get("content") and score_quiz_chunk(chunk.get("content", "")) > 0
         )
         selected_chunks = select_quiz_chunks(
@@ -505,7 +541,8 @@ class EduHelperService:
         context = format_quiz_context(selected_chunks)
         logger.debug(
             "Quiz context selection: user_id=%s document_id=%s total_chunks=%s "
-            "filtered_chunks=%s selected_chunks=%s selected_indexes=%s context_chars=%s",
+            "filtered_chunks=%s selected_chunks=%s selected_indexes=%s "
+            "context_chars=%s",
             user_id,
             active_document["id"],
             len(chunks),
@@ -516,7 +553,8 @@ class EduHelperService:
         )
         if len(context) < QUIZ_MIN_CONTEXT_CHARS:
             logger.debug(
-                "Quiz rejected before Ollama: reason=insufficient_selected_context user_id=%s document_id=%s",
+                "Quiz rejected before Ollama: "
+                "reason=insufficient_selected_context user_id=%s document_id=%s",
                 user_id,
                 active_document["id"],
             )
@@ -548,8 +586,8 @@ class EduHelperService:
                 raw_questions = payload.get("questions")
                 raw_count = len(raw_questions) if isinstance(raw_questions, list) else 0
                 logger.debug(
-                    "Quiz payload validation: user_id=%s document_id=%s attempt=%s raw_questions=%s "
-                    "accepted=%s rejected=%s",
+                    "Quiz payload validation: user_id=%s document_id=%s "
+                    "attempt=%s raw_questions=%s accepted=%s rejected=%s",
                     user_id,
                     active_document["id"],
                     attempt + 1,
@@ -559,7 +597,10 @@ class EduHelperService:
                 )
             except QuizValidationError as exc:
                 rejected_reasons.append("invalid_schema")
-                logger.debug("Quiz validation error: reason=invalid_schema detail=%s", exc)
+                logger.debug(
+                    "Quiz validation error: reason=invalid_schema detail=%s",
+                    exc,
+                )
                 continue
             except RuntimeError:
                 logger.exception(
@@ -572,7 +613,8 @@ class EduHelperService:
             if validation.insufficient_material:
                 saw_insufficient_material = True
                 logger.debug(
-                    "Quiz validation: reason=insufficient_material user_id=%s document_id=%s attempt=%s",
+                    "Quiz validation: reason=insufficient_material user_id=%s "
+                    "document_id=%s attempt=%s",
                     user_id,
                     active_document["id"],
                     attempt + 1,
@@ -591,7 +633,8 @@ class EduHelperService:
             rejected_reasons.extend(validation.rejected_reasons)
             for reason in validation.rejected_reasons:
                 logger.debug(
-                    "Quiz rejected question: reason=%s user_id=%s document_id=%s attempt=%s",
+                    "Quiz rejected question: reason=%s user_id=%s "
+                    "document_id=%s attempt=%s",
                     reason,
                     user_id,
                     active_document["id"],
@@ -602,7 +645,8 @@ class EduHelperService:
                 break
             if attempt == 0:
                 logger.debug(
-                    "Quiz retry requested: user_id=%s document_id=%s missing_questions=%s",
+                    "Quiz retry requested: user_id=%s document_id=%s "
+                    "missing_questions=%s",
                     user_id,
                     active_document["id"],
                     missing_count,
@@ -619,7 +663,8 @@ class EduHelperService:
         minimum_questions = 1 if question_count == 1 else 2
         if len(accepted_questions) >= minimum_questions:
             logger.debug(
-                "Quiz session created: user_id=%s document_id=%s questions=%s requested=%s",
+                "Quiz session created: user_id=%s document_id=%s questions=%s "
+                "requested=%s",
                 user_id,
                 active_document["id"],
                 len(accepted_questions[:question_count]),
@@ -638,7 +683,11 @@ class EduHelperService:
                 active_document["id"],
                 sorted(set(rejected_reasons)),
             )
-        if saw_insufficient_material and not accepted_questions and not rejected_reasons:
+        if (
+            saw_insufficient_material
+            and not accepted_questions
+            and not rejected_reasons
+        ):
             return QUIZ_INSUFFICIENT_MESSAGE
         return QUIZ_GENERATION_ERROR_MESSAGE
 
@@ -834,7 +883,10 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     if left_norm == 0.0 or right_norm == 0.0:
         return 0.0
 
-    dot_product = sum(left_value * right_value for left_value, right_value in zip(left, right))
+    dot_product = sum(
+        left_value * right_value
+        for left_value, right_value in zip(left, right)
+    )
     return dot_product / (left_norm * right_norm)
 
 
@@ -868,11 +920,15 @@ def _build_quiz_generation_retry_prompt(
     accepted_questions: list,
 ) -> str:
     """Собирает повторный запрос для недостающих вопросов викторины."""
-    accepted_text = "\n".join(f"- {question.question}" for question in accepted_questions) or "- нет"
+    accepted_text = (
+        "\n".join(f"- {question.question}" for question in accepted_questions)
+        or "- нет"
+    )
     reasons = ", ".join(sorted(set(rejected_reasons))) or "invalid_schema"
     return (
         f"Создай ровно {missing_count} новых вопросов.\n"
-        "Сохрани язык основного текста SOURCE для всех новых вопросов и reference_answer. "
+        "Сохрани язык основного текста SOURCE для всех новых вопросов "
+        "и reference_answer. "
         "Если SOURCE на русском, пиши только по-русски. Если SOURCE на английском, "
         "пиши по-английски. Не переводи математические обозначения, имена функций, "
         "код и общепринятые термины.\n"
