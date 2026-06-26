@@ -8,3 +8,4 @@ data/uploads/*
 .DS_Store
 
 *.log
+docs/generated/

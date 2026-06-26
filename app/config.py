@@ -1,11 +1,15 @@
-from dataclasses import dataclass
+"""Загружает настройки приложения из переменных окружения."""
+
 import os
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
 
 @dataclass(frozen=True)
 class Settings:
+    """Хранит настройки, с которыми запускается приложение."""
+
     bot_token: str
     ollama_base_url: str
     ollama_chat_model: str
@@ -21,6 +25,7 @@ class Settings:
 
 
 def _get_int(name: str, default: int) -> int:
+    """Читает целочисленную настройку из окружения."""
     value = os.getenv(name, str(default))
     try:
         return int(value)
@@ -29,6 +34,7 @@ def _get_int(name: str, default: int) -> int:
 
 
 def _get_float(name: str, default: float) -> float:
+    """Читает числовую настройку из окружения."""
     value = os.getenv(name, str(default))
     try:
         return float(value)
@@ -37,6 +43,7 @@ def _get_float(name: str, default: float) -> float:
 
 
 def _get_min_similarity() -> float:
+    """Читает минимальную похожесть и проверяет её диапазон."""
     value = _get_float("MIN_SIMILARITY", 0.35)
     if not -1.0 <= value <= 1.0:
         raise ValueError("Настройка MIN_SIMILARITY должна быть от -1.0 до 1.0.")
@@ -44,6 +51,7 @@ def _get_min_similarity() -> float:
 
 
 def load_settings() -> Settings:
+    """Загружает настройки и проверяет обязательный токен бота."""
     load_dotenv()
 
     bot_token = os.getenv("BOT_TOKEN", "").strip()
@@ -55,7 +63,10 @@ def load_settings() -> Settings:
 
     return Settings(
         bot_token=bot_token,
-        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/"),
+        ollama_base_url=os.getenv(
+            "OLLAMA_BASE_URL",
+            "http://localhost:11434",
+        ).rstrip("/"),
         ollama_chat_model=os.getenv("OLLAMA_CHAT_MODEL", "qwen3:8b"),
         ollama_embedding_model=os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
         ollama_temperature=_get_float("OLLAMA_TEMPERATURE", 0.2),

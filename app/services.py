@@ -1,3 +1,5 @@
+"""Связывает загрузку, поиск, ответы, конспекты и викторины."""
+
 from dataclasses import dataclass
 import logging
 import math
@@ -19,7 +21,6 @@ from app.quiz import (
     select_quiz_chunks,
     score_quiz_chunk,
     validate_evaluation_payload,
-    validate_quiz_payload,
     validate_quiz_payload_partial,
 )
 from app.text_utils import clean_model_output
@@ -288,6 +289,8 @@ QUIZ_EVALUATION_SCHEMA = {
 
 @dataclass
 class DialogContext:
+    """Хранит последний успешный ход диалога по документу."""
+
     document_id: int
     question: str
     answer: str
@@ -295,11 +298,15 @@ class DialogContext:
 
 @dataclass
 class SemanticRoute:
+    """Хранит решение маршрутизатора и готовый embedding запроса."""
+
     intent: str
     query_embedding: list[float] | None = None
 
 
 class EduHelperService:
+    """Содержит основную учебную логику приложения."""
+
     def __init__(
         self,
         settings,
@@ -317,6 +324,7 @@ class EduHelperService:
         self._builtin_intent_embeddings: dict[str, list[list[float]]] | None = None
 
     async def process_file(self, user_id: int, file_path: str, filename: str) -> int:
+        """Извлекает текст, считает embeddings и сохраняет документ."""
         saved = False
         try:
             loader = get_loader(file_path)
@@ -356,6 +364,7 @@ class EduHelperService:
         question: str,
         query_embedding: list[float] | None = None,
     ) -> str:
+        """Отвечает на вопрос пользователя по активному документу."""
         active_document = await self.database.get_active_document(user_id)
         if active_document is None:
             return NO_MATERIALS_MESSAGE
@@ -412,6 +421,7 @@ class EduHelperService:
         return answer
 
     async def summarize_document(self, user_id: int) -> str:
+        """Создаёт конспект активного документа пользователя."""
         active_document = await self.database.get_active_document(user_id)
         if active_document is None:
             return NO_MATERIALS_MESSAGE
@@ -448,6 +458,7 @@ class EduHelperService:
         return f"{summary}\n\nИсточник: {active_document['filename']}"
 
     async def _summarize_large_document(self, chunks: list[str]) -> str:
+        """Создаёт конспект большого документа через несколько запросов."""
         batches = _make_text_batches(chunks, SUMMARY_BATCH_MAX_CHARS)
         map_summaries: list[str] = []
         try:
@@ -461,6 +472,7 @@ class EduHelperService:
             return SUMMARY_ERROR_MESSAGE
 
     async def _reduce_summaries(self, summaries: list[str]) -> str:
+        """Объединяет промежуточные конспекты в итоговый текст."""
         reduce_batches = _make_text_batches(summaries, SUMMARY_REDUCE_MAX_CHARS)
         if len(reduce_batches) == 1:
             result = await self.ollama_client.generate_answer(SUMMARY_REDUCE_PROMPT, reduce_batches[0])
@@ -475,6 +487,7 @@ class EduHelperService:
         return clean_model_output(final)
 
     async def generate_quiz(self, user_id: int, question_count: int) -> QuizSession | str:
+        """Создаёт викторину по активному документу."""
         active_document = await self.database.get_active_document(user_id)
         if active_document is None:
             return "Сначала загрузите документ или выберите его командой /use ID."
@@ -637,6 +650,7 @@ class EduHelperService:
         source_context: str,
         user_answer: str,
     ) -> tuple[str, str] | str:
+        """Проверяет ответ пользователя на вопрос викторины."""
         user_prompt = _build_quiz_evaluation_prompt(
             question,
             reference_answer,
@@ -664,6 +678,7 @@ class EduHelperService:
         return QUIZ_EVALUATION_ERROR_MESSAGE
 
     async def use_document(self, user_id: int, document_id: int) -> str:
+        """Выбирает активный документ пользователя."""
         document = await self.database.set_active_document(user_id, document_id)
         if document is None:
             return "Документ с таким ID не найден."
@@ -671,6 +686,7 @@ class EduHelperService:
         return f"Активный материал: {document['filename']}"
 
     async def delete_document(self, user_id: int, document_id: int) -> str:
+        """Удаляет документ из базы и связанный с ним файл."""
         document = await self.database.delete_document(user_id, document_id)
         if document is None:
             return "Документ с таким ID не найден."
@@ -684,6 +700,7 @@ class EduHelperService:
         return f"Материал удалён: {document['filename']}"
 
     async def clear_user_data(self, user_id: int) -> str:
+        """Очищает документы пользователя и удаляет их файлы."""
         file_paths = await self.database.clear_user_data(user_id)
         self._clear_dialog_context(user_id)
         if _delete_files(file_paths):
@@ -691,6 +708,7 @@ class EduHelperService:
         return "Материалы очищены, но не удалось удалить некоторые файлы с диска."
 
     async def list_documents(self, user_id: int) -> str:
+        """Формирует список документов пользователя для Telegram."""
         documents = await self.database.get_user_documents(user_id)
         if not documents:
             return "У вас пока нет загруженных материалов."
@@ -706,6 +724,7 @@ class EduHelperService:
         return "\n".join(lines)
 
     async def route_text_semantic(self, text: str) -> SemanticRoute:
+        """Выбирает между системным ответом и обычным поиском."""
         try:
             prototype_embeddings = await self._get_builtin_intent_embeddings()
             text_embedding = await self.ollama_client.embed(text)
@@ -736,6 +755,7 @@ class EduHelperService:
         return SemanticRoute(best_intent, text_embedding)
 
     async def detect_builtin_intent_semantic(self, text: str) -> str | None:
+        """Возвращает системное намерение по embedding, если оно уверенное."""
         route = await self.route_text_semantic(text)
         if route.intent == "rag":
             return None
@@ -747,6 +767,7 @@ class EduHelperService:
         document_id: int,
         question: str,
     ) -> DialogContext | None:
+        """Возвращает прошлый ход, если вопрос похож на уточнение."""
         context = self._dialog_context.get(user_id)
         if context is None or context.document_id != document_id:
             return None
@@ -761,6 +782,7 @@ class EduHelperService:
         question: str,
         answer: str,
     ) -> None:
+        """Сохраняет последний успешный ответ по документу."""
         self._dialog_context[user_id] = DialogContext(
             document_id=document_id,
             question=question,
@@ -768,9 +790,11 @@ class EduHelperService:
         )
 
     def _clear_dialog_context(self, user_id: int) -> None:
+        """Очищает короткую память диалога пользователя."""
         self._dialog_context.pop(user_id, None)
 
     async def _get_builtin_intent_embeddings(self) -> dict[str, list[list[float]]]:
+        """Лениво считает embeddings для прототипов маршрутизатора."""
         if self._builtin_intent_embeddings is not None:
             return self._builtin_intent_embeddings
 
@@ -784,6 +808,7 @@ class EduHelperService:
 
 
 def _format_sources(results: list[dict]) -> str:
+    """Формирует блок источников для ответа."""
     filenames = []
     for result in results:
         filename = result.get("filename")
@@ -800,6 +825,7 @@ def _format_sources(results: list[dict]) -> str:
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    """Считает косинусную похожесть двух векторов."""
     if not left or not right or len(left) != len(right):
         return 0.0
 
@@ -813,6 +839,7 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 
 def _top_mean(similarities: list[float], count: int = 2) -> float:
+    """Берёт среднее нескольких лучших значений похожести."""
     if not similarities:
         return 0.0
 
@@ -821,6 +848,7 @@ def _top_mean(similarities: list[float], count: int = 2) -> float:
 
 
 def _build_quiz_generation_prompt(question_count: int, context: str) -> str:
+    """Собирает запрос для генерации вопросов викторины."""
     return (
         f"Создай ровно {question_count} вопросов.\n\n"
         "Определи язык основного текста SOURCE и используй его для всех вопросов "
@@ -839,6 +867,7 @@ def _build_quiz_generation_retry_prompt(
     rejected_reasons: list[str],
     accepted_questions: list,
 ) -> str:
+    """Собирает повторный запрос для недостающих вопросов викторины."""
     accepted_text = "\n".join(f"- {question.question}" for question in accepted_questions) or "- нет"
     reasons = ", ".join(sorted(set(rejected_reasons))) or "invalid_schema"
     return (
@@ -863,6 +892,7 @@ def _build_quiz_evaluation_prompt(
     source_context: str,
     user_answer: str,
 ) -> str:
+    """Готовит контекст для проверки ответа пользователя."""
     return (
         "Вопрос:\n"
         f"{question}\n\n"
@@ -879,6 +909,7 @@ def _build_quiz_evaluation_prompt(
 
 
 def _limit_context_chunks(chunks: list[str], limit: int) -> list[str]:
+    """Ограничивает список фрагментов по общей длине."""
     limited_chunks: list[str] = []
     current_length = 0
     for chunk in chunks:
@@ -897,10 +928,12 @@ def _limit_context_chunks(chunks: list[str], limit: int) -> list[str]:
 
 
 def _chunks_total_length(chunks: list[str]) -> int:
+    """Считает длину фрагментов с разделителями."""
     return sum(len(chunk) for chunk in chunks) + max(0, len(chunks) - 1) * 2
 
 
 def _make_text_batches(chunks: list[str], limit: int) -> list[list[str]]:
+    """Разбивает список текстов на последовательные пачки."""
     batches: list[list[str]] = []
     current: list[str] = []
     current_length = 0
@@ -922,6 +955,7 @@ def _make_text_batches(chunks: list[str], limit: int) -> list[list[str]]:
 
 
 def _looks_like_follow_up(question: str) -> bool:
+    """Проверяет, похож ли вопрос на уточнение к прошлому ответу."""
     normalized = " ".join(question.lower().strip().split())
     normalized = normalized.rstrip(".,!?…")
     if not normalized or len(normalized) > 160:
@@ -936,6 +970,7 @@ def _looks_like_follow_up(question: str) -> bool:
 
 
 def _delete_file(file_path: Path) -> bool:
+    """Удаляет обычный файл и сообщает, получилось ли это."""
     try:
         if file_path.exists() and file_path.is_file():
             file_path.unlink()
@@ -945,6 +980,7 @@ def _delete_file(file_path: Path) -> bool:
 
 
 def _delete_files(file_paths: list[str]) -> bool:
+    """Удаляет несколько файлов и не останавливается на первой ошибке."""
     success = True
     seen_paths = set()
     for file_path in file_paths:

@@ -1,3 +1,5 @@
+"""Содержит функции для очистки и поисковой подготовки текста."""
+
 import re
 import unicodedata
 
@@ -7,14 +9,53 @@ NBSP_CHARS = ("\u00a0", "\u202f")
 WORD_RE = re.compile(r"[a-zа-яё]+(?:_[a-zа-яё0-9]+)*|\d+(?:\.\d+)*", re.IGNORECASE)
 TECH_IDENTIFIER_RE = re.compile(r"[a-z_][a-z0-9_]*", re.IGNORECASE)
 STRUCTURAL_REF_RE = re.compile(
-    r"\b(?:теорем\w*|theorem|раздел\w*|section|глав\w*|chapter)\s+\d+(?:\.\d+)*\b|\b\d+\.\d+(?:\.\d+)*\b",
+    (
+        r"\b(?:теорем\w*|theorem|раздел\w*|section|глав\w*|chapter)"
+        r"\s+\d+(?:\.\d+)*\b|\b\d+\.\d+(?:\.\d+)*\b"
+    ),
     re.IGNORECASE,
 )
 STOP_WORDS = {
-    "а", "в", "во", "и", "или", "к", "ко", "на", "о", "об", "от", "по", "с",
-    "со", "у", "что", "это", "как", "какие", "какой", "какая", "какое", "про",
-    "для", "из", "за", "the", "a", "an", "is", "are", "of", "to", "in", "on",
-    "about", "me", "tell", "explain", "what",
+    "а",
+    "в",
+    "во",
+    "и",
+    "или",
+    "к",
+    "ко",
+    "на",
+    "о",
+    "об",
+    "от",
+    "по",
+    "с",
+    "со",
+    "у",
+    "что",
+    "это",
+    "как",
+    "какие",
+    "какой",
+    "какая",
+    "какое",
+    "про",
+    "для",
+    "из",
+    "за",
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "of",
+    "to",
+    "in",
+    "on",
+    "about",
+    "me",
+    "tell",
+    "explain",
+    "what",
 }
 QUERY_PREFIXES = (
     "что такое",
@@ -28,6 +69,7 @@ QUERY_PREFIXES = (
 
 
 def normalize_document_text(text: str) -> str:
+    """Исправляет пробелы, переносы строк и явные разрывы слов."""
     text = unicodedata.normalize("NFC", text or "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace(SOFT_HYPHEN, "")
@@ -62,6 +104,7 @@ def normalize_document_text(text: str) -> str:
 
 
 def tokenize_for_search(text: str) -> list[str]:
+    """Разбивает текст на значимые токены для поиска."""
     normalized = _normalize_search_text(text)
     return [
         token
@@ -71,6 +114,7 @@ def tokenize_for_search(text: str) -> list[str]:
 
 
 def clean_model_output(text: str) -> str:
+    """Убирает лишние пробелы и простые LaTeX-разделители из ответа модели."""
     cleaned = (text or "").strip()
     cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
     cleaned = re.sub(r"[ \t]+$", "", cleaned, flags=re.MULTILINE)
@@ -80,16 +124,22 @@ def clean_model_output(text: str) -> str:
 
 
 def significant_query_phrase(query: str) -> str:
+    """Выделяет основную фразу запроса без типового вступления."""
     normalized = _normalize_search_text(query)
     for prefix in QUERY_PREFIXES:
         if normalized.startswith(prefix + " "):
             normalized = normalized[len(prefix):].strip()
             break
-    tokens = [token for token in tokenize_for_search(normalized) if token not in STOP_WORDS]
+    tokens = [
+        token
+        for token in tokenize_for_search(normalized)
+        if token not in STOP_WORDS
+    ]
     return " ".join(tokens)
 
 
 def structural_refs(text: str) -> set[str]:
+    """Находит номера разделов, теорем и похожие структурные ссылки."""
     normalized = _normalize_search_text(text)
     refs = {match.group(0).strip() for match in STRUCTURAL_REF_RE.finditer(normalized)}
     refs.update(re.findall(r"\b\d+\.\d+(?:\.\d+)*\b", normalized))
@@ -97,18 +147,22 @@ def structural_refs(text: str) -> set[str]:
 
 
 def technical_identifiers(text: str) -> set[str]:
+    """Находит технические идентификаторы вроде имён функций."""
     return {
         token
         for token in tokenize_for_search(text)
-        if TECH_IDENTIFIER_RE.fullmatch(token) and ("_" in token or any(char.isdigit() for char in token))
+        if TECH_IDENTIFIER_RE.fullmatch(token)
+        and ("_" in token or any(char.isdigit() for char in token))
     }
 
 
 def _normalize_line_spaces(line: str) -> str:
+    """Схлопывает пробелы внутри одной строки."""
     return re.sub(r"[ \t]+", " ", line).rstrip().strip()
 
 
 def _can_join_hyphenated_line(line: str, raw_lines: list[str], index: int) -> bool:
+    """Проверяет, можно ли склеить слово, разорванное переносом."""
     if not re.search(r"[^\W\d_]-$", line, re.UNICODE):
         return False
     if _looks_like_list_or_code(line):
@@ -129,6 +183,7 @@ def _can_join_hyphenated_line(line: str, raw_lines: list[str], index: int) -> bo
 
 
 def _next_non_empty_line_index(lines: list[str], start: int) -> int | None:
+    """Ищет следующую непустую строку."""
     for index in range(start, len(lines)):
         if lines[index].strip():
             return index
@@ -137,6 +192,7 @@ def _next_non_empty_line_index(lines: list[str], start: int) -> int | None:
 
 
 def _looks_like_list_or_code(line: str) -> bool:
+    """Проверяет, похожа ли строка на список или код."""
     stripped = line.strip()
     return bool(
         re.match(r"^[-*+]\s+", stripped)
@@ -146,6 +202,7 @@ def _looks_like_list_or_code(line: str) -> bool:
 
 
 def _normalize_search_text(text: str) -> str:
+    """Приводит текст к виду для лексического поиска."""
     normalized = unicodedata.normalize("NFC", text or "").casefold().replace("ё", "е")
     normalized = normalized.replace("–", "-").replace("—", "-")
     return re.sub(r"\s+", " ", normalized).strip()

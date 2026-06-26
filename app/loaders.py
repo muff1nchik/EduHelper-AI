@@ -1,18 +1,23 @@
+"""Извлекает текст из поддерживаемых учебных файлов."""
+
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from docx import Document
 import fitz
+from docx import Document
 
 from app.text_utils import normalize_document_text
 
 
 class BaseLoader(ABC):
+    """Задаёт общий интерфейс для загрузки документов."""
+
     @abstractmethod
     def load_text(self, file_path: str) -> str:
-        """Извлечь текст из файла."""
+        """Извлекает текст из файла."""
 
     def _ensure_not_empty(self, text: str) -> str:
+        """Нормализует текст и проверяет, что он не пустой."""
         text = normalize_document_text(text)
         if not text or not text.strip():
             raise ValueError("Документ пустой или не содержит текстового слоя.")
@@ -20,16 +25,24 @@ class BaseLoader(ABC):
 
 
 class TextLoader(BaseLoader):
+    """Загружает текстовые файлы TXT и Markdown."""
+
     def load_text(self, file_path: str) -> str:
+        """Читает текстовый файл в кодировке UTF-8."""
         try:
             text = Path(file_path).read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
-            raise ValueError("Не удалось прочитать текстовый файл в кодировке UTF-8.") from exc
+            raise ValueError(
+                "Не удалось прочитать текстовый файл в кодировке UTF-8."
+            ) from exc
         return self._ensure_not_empty(text)
 
 
 class PdfLoader(BaseLoader):
+    """Загружает текст из PDF без OCR."""
+
     def load_text(self, file_path: str) -> str:
+        """Извлекает текст из всех страниц PDF."""
         try:
             with fitz.open(file_path) as document:
                 text = "\n\n".join(page.get_text("text") for page in document)
@@ -39,7 +52,10 @@ class PdfLoader(BaseLoader):
 
 
 class DocxLoader(BaseLoader):
+    """Загружает текст из DOCX-документа."""
+
     def load_text(self, file_path: str) -> str:
+        """Извлекает абзацы и таблицы из DOCX."""
         try:
             document = Document(file_path)
         except Exception as exc:
@@ -65,6 +81,7 @@ class DocxLoader(BaseLoader):
 
 
 def get_loader(file_path: str) -> BaseLoader:
+    """Выбирает загрузчик по расширению файла."""
     extension = Path(file_path).suffix.lower()
     if extension in {".txt", ".md"}:
         return TextLoader()

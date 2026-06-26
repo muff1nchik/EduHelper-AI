@@ -161,6 +161,10 @@ EduHelper-AI/
 │   └── text_utils.py
 ├── data/
 │   └── uploads/
+├── docs/
+│   └── README.md
+├── scripts/
+│   └── generate_docs.py
 ├── .env.example
 ├── .gitignore
 ├── main.py
@@ -181,6 +185,16 @@ EduHelper-AI/
 - `app/ollama_client.py` — запросы к Ollama;
 - `app/quiz.py` — состояние и валидация викторины;
 - `app/services.py` — основная бизнес-логика.
+
+## Документация исходного кода
+
+Основные модули, классы и функции имеют короткие docstrings. HTML-документация создаётся встроенным `pydoc`.
+
+```bash
+python scripts/generate_docs.py
+```
+
+Готовые HTML-файлы появятся в `docs/generated/`.
 
 ## Ограничения
 

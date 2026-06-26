@@ -1,3 +1,5 @@
+"""Отправляет запросы к локальному API Ollama."""
+
 import json
 
 import httpx
@@ -37,6 +39,8 @@ Markdown-таблицы и HTML-разметку.
 
 
 class OllamaClient:
+    """Работает с embeddings и генерацией ответов через Ollama."""
+
     def __init__(
         self,
         base_url: str,
@@ -54,6 +58,7 @@ class OllamaClient:
         self.timeout = timeout
 
     async def embed(self, text: str) -> list[float]:
+        """Создаёт embedding для переданного текста."""
         payload = {"model": self.embedding_model, "input": text}
         data = await self._post_json("/api/embed", payload)
 
@@ -69,6 +74,7 @@ class OllamaClient:
         return [float(value) for value in embedding]
 
     async def generate_answer(self, question: str, context_chunks: list[str]) -> str:
+        """Генерирует обычный ответ по вопросу и контексту."""
         context = "\n\n".join(
             f"Фрагмент {index + 1}:\n{chunk}"
             for index, chunk in enumerate(context_chunks)
@@ -103,6 +109,7 @@ class OllamaClient:
         user_prompt: str,
         schema: dict,
     ) -> dict:
+        """Запрашивает у модели JSON по заданной схеме."""
         payload = {
             "model": self.chat_model,
             "messages": [
@@ -131,6 +138,7 @@ class OllamaClient:
         return result
 
     async def _post_json(self, path: str, payload: dict) -> dict:
+        """Отправляет POST-запрос и возвращает JSON-ответ."""
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(f"{self.base_url}{path}", json=payload)

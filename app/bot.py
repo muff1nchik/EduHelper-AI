@@ -1,4 +1,5 @@
-import asyncio
+"""Описывает Telegram-команды и маршрутизацию сообщений бота."""
+
 import logging
 import re
 from datetime import datetime, timezone
@@ -84,6 +85,7 @@ CAPABILITIES_PHRASES = {
 
 
 def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
+    """Создаёт dispatcher и регистрирует обработчики Telegram."""
     router = Router()
     uploads_path = Path(uploads_dir)
     quiz_sessions: dict[int, QuizSession] = {}
@@ -91,6 +93,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("start"))
     async def start(message: Message) -> None:
+        """Отвечает на команду /start."""
         await message.answer(
             "Привет! Я EduHelper AI — локальный образовательный ИИ-ассистент. "
             "Загрузи PDF, TXT, MD или DOCX файл, задай вопрос по материалу "
@@ -99,6 +102,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("help"))
     async def help_command(message: Message) -> None:
+        """Показывает краткую инструкцию по командам."""
         await message.answer(
             "Как пользоваться:\n"
             "1. Отправьте PDF, TXT, MD или DOCX файл.\n"
@@ -118,12 +122,14 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("clear"))
     async def clear(message: Message) -> None:
+        """Очищает материалы пользователя по команде /clear."""
         answer = await service.clear_user_data(message.from_user.id)
         _clear_quiz_state(message.from_user.id, quiz_sessions, quiz_starting)
         await message.answer(answer)
 
     @router.message(Command("documents"))
     async def documents(message: Message) -> None:
+        """Показывает список загруженных документов."""
         if message.from_user is None:
             await message.answer("Не удалось определить пользователя.")
             return
@@ -133,6 +139,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("use"))
     async def use_document(message: Message) -> None:
+        """Выбирает активный документ по команде /use."""
         if message.from_user is None:
             await message.answer("Не удалось определить пользователя.")
             return
@@ -159,6 +166,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("delete"))
     async def delete_document(message: Message) -> None:
+        """Удаляет выбранный документ по команде /delete."""
         if message.from_user is None:
             await message.answer("Не удалось определить пользователя.")
             return
@@ -186,6 +194,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("quiz"))
     async def quiz(message: Message, bot: Bot) -> None:
+        """Запускает викторину по активному документу."""
         if message.from_user is None:
             await message.answer("Не удалось определить пользователя.")
             return
@@ -222,6 +231,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("stopquiz"))
     async def stop_quiz(message: Message) -> None:
+        """Останавливает текущую викторину пользователя."""
         if message.from_user is None:
             await message.answer("Не удалось определить пользователя.")
             return
@@ -236,6 +246,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(Command("summary"))
     async def summary(message: Message, bot: Bot) -> None:
+        """Создаёт конспект активного документа."""
         if message.from_user is None:
             await message.answer("Не удалось определить пользователя.")
             return
@@ -258,6 +269,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(F.document)
     async def handle_document(message: Message, bot: Bot) -> None:
+        """Сохраняет присланный документ и запускает его обработку."""
         document = message.document
         original_name = document.file_name or "document"
         extension = Path(original_name).suffix.lower()
@@ -297,6 +309,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
 
     @router.message(F.text)
     async def handle_question(message: Message, bot: Bot) -> None:
+        """Обрабатывает обычный текст пользователя."""
         text = (message.text or "").strip()
         if not text or text.startswith("/"):
             return
@@ -355,6 +368,7 @@ async def _handle_quiz_answer(
     user_id: int,
     text: str,
 ) -> None:
+    """Проверяет ответ пользователя на текущий вопрос викторины."""
     session = quiz_sessions.get(user_id)
     if session is None:
         return
@@ -419,6 +433,7 @@ async def _send_quiz_progress(
     session: QuizSession,
     prefix: str,
 ) -> None:
+    """Отправляет следующий вопрос или итог викторины."""
     if session.current_index >= session.total_questions:
         quiz_sessions.pop(user_id, None)
         await send_long_message(message, f"{prefix}\n\n{format_quiz_result(session)}")
@@ -427,6 +442,7 @@ async def _send_quiz_progress(
 
 
 def _apply_quiz_verdict(session: QuizSession, verdict: str) -> None:
+    """Начисляет баллы и переводит викторину к следующему вопросу."""
     if verdict == "correct":
         session.earned_points += 1.0
         session.correct_count += 1
@@ -440,6 +456,7 @@ def _apply_quiz_verdict(session: QuizSession, verdict: str) -> None:
 
 
 def _format_quiz_feedback(verdict: str, feedback: str, reference_answer: str) -> str:
+    """Готовит сообщение после проверки ответа викторины."""
     if verdict == "correct":
         return f"Верно!\n\n{feedback}"
     if verdict == "partial":
@@ -456,6 +473,7 @@ def _format_quiz_feedback(verdict: str, feedback: str, reference_answer: str) ->
 
 
 def _parse_quiz_question_count(text: str) -> int | None:
+    """Читает количество вопросов из команды /quiz."""
     parts = text.split()
     if len(parts) == 1:
         return QUIZ_DEFAULT_QUESTION_COUNT
@@ -475,6 +493,7 @@ def _clear_quiz_state(
     quiz_sessions: dict[int, QuizSession],
     quiz_starting: set[int],
 ) -> bool:
+    """Удаляет состояние викторины пользователя из памяти."""
     existed = user_id in quiz_sessions or user_id in quiz_starting
     quiz_sessions.pop(user_id, None)
     quiz_starting.discard(user_id)
@@ -482,16 +501,19 @@ def _clear_quiz_state(
 
 
 async def run_bot(token: str, dispatcher: Dispatcher) -> None:
+    """Запускает polling Telegram-бота."""
     bot = Bot(token=token)
     await dispatcher.start_polling(bot)
 
 
 async def send_long_message(message: Message, text: str) -> None:
+    """Отправляет длинный текст несколькими сообщениями."""
     for part in split_message(text):
         await message.answer(part)
 
 
 def split_message(text: str, max_length: int = 4000) -> list[str]:
+    """Делит длинное сообщение на части для Telegram."""
     remaining = text.strip()
     if not remaining:
         return []
@@ -512,6 +534,7 @@ def split_message(text: str, max_length: int = 4000) -> list[str]:
 
 
 def _find_message_split(text: str, max_length: int) -> int:
+    """Ищет удобную границу для разбиения сообщения."""
     min_boundary = max(1, max_length // 2)
     window = text[:max_length]
 
@@ -534,6 +557,7 @@ def _find_message_split(text: str, max_length: int) -> int:
 
 
 def get_builtin_response(text: str) -> str | None:
+    """Возвращает быстрый встроенный ответ, если фраза понятна сразу."""
     intent = detect_builtin_intent(text)
     if intent is None:
         return None
@@ -541,6 +565,7 @@ def get_builtin_response(text: str) -> str | None:
 
 
 def detect_builtin_intent(text: str) -> str | None:
+    """Распознаёт очевидное системное обращение без сетевых запросов."""
     normalized = _normalize_builtin_text(text)
     if not normalized:
         return None
@@ -558,11 +583,13 @@ def detect_builtin_intent(text: str) -> str | None:
 
 
 def is_builtin_intent_candidate(text: str) -> bool:
+    """Проверяет, стоит ли отправлять короткую фразу в семантический маршрутизатор."""
     normalized = _normalize_builtin_text(text)
     return bool(normalized) and len(normalized) <= SEMANTIC_ROUTER_MAX_LENGTH
 
 
 def _normalize_builtin_text(text: str) -> str:
+    """Приводит пользовательскую фразу к виду для быстрых правил."""
     normalized = text.lower().replace("ё", "е")
     normalized = re.sub(r"[^\w\s]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
@@ -570,6 +597,7 @@ def _normalize_builtin_text(text: str) -> str:
 
 
 def _safe_filename(filename: str) -> str:
+    """Делает имя файла безопасным для сохранения на диск."""
     allowed = []
     for char in filename:
         if char.isalnum() or char in {".", "-", "_"}:

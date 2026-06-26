@@ -1,3 +1,5 @@
+"""Хранит структуры и проверки для интерактивной викторины."""
+
 from dataclasses import dataclass
 import re
 import unicodedata
@@ -29,11 +31,15 @@ QUIZ_EVALUATION_ERROR_MESSAGE = "Не удалось проверить отве
 
 
 class QuizValidationError(ValueError):
+    """Возникает, если вопрос викторины не проходит проверку."""
+
     pass
 
 
 @dataclass(frozen=True)
 class QuizPayloadValidation:
+    """Хранит результат частичной проверки вопросов викторины."""
+
     questions: list["QuizQuestion"]
     rejected_reasons: list[str]
     insufficient_material: bool = False
@@ -41,6 +47,8 @@ class QuizPayloadValidation:
 
 @dataclass(frozen=True)
 class QuizQuestion:
+    """Хранит один вопрос викторины и его источник."""
+
     question: str
     reference_answer: str
     source_chunk_ids: tuple[int, ...]
@@ -50,6 +58,8 @@ class QuizQuestion:
 
 @dataclass
 class QuizSession:
+    """Хранит состояние текущей викторины пользователя."""
+
     document_id: int
     document_name: str
     questions: list[QuizQuestion]
@@ -64,14 +74,17 @@ class QuizSession:
 
     @property
     def current_question(self) -> QuizQuestion:
+        """Возвращает текущий вопрос викторины."""
         return self.questions[self.current_index]
 
     @property
     def total_questions(self) -> int:
+        """Возвращает количество вопросов в текущей викторине."""
         return len(self.questions)
 
 
 def normalize_quiz_text(text: str) -> str:
+    """Нормализует короткий текст для команд викторины."""
     normalized = text.lower().replace("ё", "е")
     normalized = re.sub(r"[^\w\s]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
@@ -79,6 +92,7 @@ def normalize_quiz_text(text: str) -> str:
 
 
 def is_skip_answer(text: str) -> bool:
+    """Проверяет, хочет ли пользователь пропустить вопрос."""
     return normalize_quiz_text(text) in QUIZ_SKIP_ANSWERS
 
 
@@ -87,6 +101,7 @@ def select_quiz_chunks(
     max_chunks: int = QUIZ_CONTEXT_MAX_CHUNKS,
     max_chars: int = QUIZ_CONTEXT_MAX_CHARS,
 ) -> list[dict]:
+    """Выбирает содержательные фрагменты документа для генерации викторины."""
     strict_candidates = [
         (index, chunk, score_quiz_chunk(chunk.get("content", "")))
         for index, chunk in enumerate(chunks)
@@ -140,6 +155,7 @@ def select_quiz_chunks(
 
 
 def score_quiz_chunk(content: str) -> float:
+    """Оценивает, насколько фрагмент подходит для вопросов."""
     text = (content or "").strip()
     tokens = tokenize_for_search(text)
     if len(text) < 80 or len(tokens) < 8:
@@ -167,6 +183,7 @@ def score_quiz_chunk(content: str) -> float:
 
 
 def format_quiz_context(chunks: list[dict]) -> str:
+    """Формирует SOURCE-контекст для генерации вопросов."""
     parts = []
     for index, chunk in enumerate(chunks, start=1):
         parts.append(f"[SOURCE {index}]\n{chunk['content']}")
@@ -178,6 +195,7 @@ def validate_quiz_payload(
     question_count: int,
     selected_chunks: list[dict],
 ) -> list[QuizQuestion] | str:
+    """Проверяет полный ответ модели для старого сценария генерации."""
     validation = validate_quiz_payload_partial(payload, selected_chunks)
     if validation.insufficient_material:
         return "insufficient_material"
@@ -192,6 +210,7 @@ def validate_quiz_payload_partial(
     selected_chunks: list[dict],
     existing_questions: list[QuizQuestion] | None = None,
 ) -> QuizPayloadValidation:
+    """Проверяет вопросы по одному и сохраняет валидные."""
     status = payload.get("status")
     if status not in {"ok", "insufficient_material"}:
         return QuizPayloadValidation([], ["invalid_schema"])
@@ -224,6 +243,7 @@ def validate_quiz_payload_partial(
 
 
 def _validate_quiz_item(item: object, selected_chunks: list[dict]) -> tuple[QuizQuestion | None, str | None]:
+    """Проверяет один вопрос и собирает его источник."""
     if not isinstance(item, dict):
         return None, "invalid_schema"
 
@@ -280,6 +300,7 @@ def _validate_quiz_item(item: object, selected_chunks: list[dict]) -> tuple[Quiz
 
 
 def validate_evaluation_payload(payload: dict) -> tuple[str, str]:
+    """Проверяет structured-ответ оценки пользовательского ответа."""
     verdict = payload.get("verdict")
     feedback = str(payload.get("feedback", "")).strip()
     if verdict not in {"correct", "partial", "incorrect"}:
@@ -290,6 +311,7 @@ def validate_evaluation_payload(payload: dict) -> tuple[str, str]:
 
 
 def format_question(session: QuizSession) -> str:
+    """Форматирует текущий вопрос викторины."""
     return (
         f"Вопрос {session.current_index + 1}/{session.total_questions}:\n"
         f"{session.current_question.question}"
@@ -297,6 +319,7 @@ def format_question(session: QuizSession) -> str:
 
 
 def format_quiz_start(session: QuizSession) -> str:
+    """Форматирует первое сообщение после создания викторины."""
     prefix = ""
     if session.requested_question_count and session.total_questions < session.requested_question_count:
         prefix = f"Удалось подготовить {session.total_questions} качественных вопросов.\n\n"
@@ -309,6 +332,7 @@ def format_quiz_start(session: QuizSession) -> str:
 
 
 def format_quiz_result(session: QuizSession, stopped: bool = False) -> str:
+    """Форматирует итог или остановку викторины."""
     if stopped:
         return (
             "Викторина остановлена.\n"
@@ -328,15 +352,18 @@ def format_quiz_result(session: QuizSession, stopped: bool = False) -> str:
 
 
 def format_points(points: float) -> str:
+    """Показывает целые баллы без лишней дробной части."""
     return str(int(points)) if points.is_integer() else str(points)
 
 
 def _looks_like_heading_only(text: str) -> bool:
+    """Проверяет, похож ли фрагмент только на заголовок."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return len(lines) == 1 and len(lines[0]) < 90 and not lines[0].endswith((".", "!", "?", "…"))
 
 
 def _looks_like_table_of_contents(text: str) -> bool:
+    """Проверяет, похож ли фрагмент на оглавление."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) < 3:
         return False
@@ -346,6 +373,7 @@ def _looks_like_table_of_contents(text: str) -> bool:
 
 
 def _fallback_quiz_candidates(chunks: list[dict]) -> list[tuple[int, dict, float]]:
+    """Выбирает запасные фрагменты, если строгая оценка слишком жёсткая."""
     candidates = []
     for index, chunk in enumerate(chunks):
         content = chunk.get("content", "")
@@ -359,6 +387,7 @@ def _fallback_quiz_candidates(chunks: list[dict]) -> list[tuple[int, dict, float
 
 
 def _is_usable_quiz_context(content: str) -> bool:
+    """Проверяет, можно ли использовать фрагмент как контекст викторины."""
     text = (content or "").strip()
     if len(text) < 60:
         return False
@@ -374,6 +403,7 @@ def _is_usable_quiz_context(content: str) -> bool:
 
 
 def _is_near_duplicate(chunk: dict, selected: list[dict]) -> bool:
+    """Проверяет, похож ли фрагмент на уже выбранные."""
     content = _normalize_space(chunk.get("content", ""))
     tokens = set(tokenize_for_search(chunk.get("content", "")))
     if not tokens:
@@ -393,6 +423,7 @@ def _add_quiz_neighbors(
     max_chunks: int,
     max_chars: int,
 ) -> list[dict]:
+    """Добавляет соседние фрагменты к выбранному quiz-контексту."""
     by_index = {chunk.get("chunk_index", index): chunk for index, chunk in enumerate(chunks)}
     result = list(selected)
     used = {id(chunk) for chunk in result}
@@ -418,6 +449,7 @@ def _add_quiz_neighbors(
 
 
 def _limit_quiz_context(chunks: list[dict], max_chars: int) -> list[dict]:
+    """Ограничивает quiz-контекст по общей длине."""
     result = []
     total = 0
     for chunk in chunks:
@@ -430,6 +462,7 @@ def _limit_quiz_context(chunks: list[dict], max_chars: int) -> list[dict]:
 
 
 def _parse_source_ids(value: object, source_count: int) -> tuple[int, ...]:
+    """Читает локальные номера SOURCE из ответа модели."""
     if not isinstance(value, list):
         return ()
     result = []
@@ -448,6 +481,7 @@ def _parse_source_ids(value: object, source_count: int) -> tuple[int, ...]:
 
 
 def _resolve_source_ids(question: str, reference_answer: str, selected_chunks: list[dict]) -> tuple[int, ...]:
+    """Подбирает источник вопроса по пересечению значимых слов."""
     query_tokens = _significant_quiz_tokens(f"{question} {reference_answer}")
     if not query_tokens:
         return ()
@@ -472,6 +506,7 @@ def _source_overlap_score(
     reference_answer: str,
     selected_chunks: list[dict],
 ) -> int:
+    """Считает совпадение вопроса и ответа с указанными SOURCE."""
     query_tokens = _significant_quiz_tokens(f"{question} {reference_answer}")
     score = 0
     for source_id in source_ids:
@@ -483,6 +518,7 @@ def _source_overlap_score(
 
 
 def _build_evidence_quote(question: str, reference_answer: str, source_context: str) -> str:
+    """Выбирает подтверждающий фрагмент из связанного SOURCE."""
     query_tokens = _significant_quiz_tokens(f"{question} {reference_answer}")
     candidates = _evidence_candidates(source_context)
     if not candidates:
@@ -500,6 +536,7 @@ def _build_evidence_quote(question: str, reference_answer: str, source_context: 
 
 
 def _evidence_candidates(text: str) -> list[str]:
+    """Делит source-текст на кандидаты для evidence."""
     candidates = []
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text or "") if part.strip()]
     for paragraph in paragraphs or [text.strip()]:
@@ -518,6 +555,7 @@ def _evidence_candidates(text: str) -> list[str]:
 
 
 def _trim_evidence(text: str, limit: int) -> str:
+    """Обрезает evidence без разрыва слова, когда это возможно."""
     stripped = _normalize_space(text)
     if len(stripped) <= limit:
         return stripped
@@ -532,6 +570,7 @@ def _trim_evidence(text: str, limit: int) -> str:
 
 
 def _quote_in_context(quote: str, context: str) -> bool:
+    """Проверяет наличие цитаты в контексте после мягкой нормализации."""
     return _normalize_evidence_text(quote) in _normalize_evidence_text(context)
 
 
@@ -541,6 +580,7 @@ def _is_substantive_reference_answer(
     evidence_quote: str,
     source_context: str,
 ) -> bool:
+    """Проверяет, что эталонный ответ не является заглушкой."""
     return _reference_answer_rejection_reason(question, answer, evidence_quote, source_context) is None
 
 
@@ -550,6 +590,7 @@ def _reference_answer_rejection_reason(
     evidence_quote: str,
     source_context: str,
 ) -> str | None:
+    """Возвращает причину отклонения эталона или None."""
     answer_tokens = tokenize_for_search(answer)
     if len(answer_tokens) <= 2:
         question_tokens = set(tokenize_for_search(question))
@@ -587,6 +628,7 @@ def _reference_answer_rejection_reason(
 
 
 def _has_source_overlap(tokens: list[str], evidence_quote: str, source_context: str) -> bool:
+    """Проверяет минимальную связь ответа с источником."""
     if not tokens:
         return False
     source_tokens = set(tokenize_for_search(f"{evidence_quote} {source_context}"))
@@ -595,6 +637,7 @@ def _has_source_overlap(tokens: list[str], evidence_quote: str, source_context: 
 
 
 def _significant_quiz_tokens(text: str) -> set[str]:
+    """Выделяет значимые токены для проверки вопросов."""
     return {
         token
         for token in tokenize_for_search(text)
@@ -603,10 +646,12 @@ def _significant_quiz_tokens(text: str) -> set[str]:
 
 
 def _normalize_space(text: str) -> str:
+    """Схлопывает повторяющиеся пробелы в одну строку."""
     return re.sub(r"\s+", " ", text or "").strip()
 
 
 def _normalize_evidence_text(text: str) -> str:
+    """Нормализует текст для проверки evidence-фрагмента."""
     normalized = unicodedata.normalize("NFC", text or "")
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
     normalized = normalized.replace("\u00ad", "")

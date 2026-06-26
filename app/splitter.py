@@ -1,9 +1,13 @@
+"""Делит очищенный текст документа на удобные фрагменты."""
+
 import re
 
 from app.text_utils import normalize_document_text
 
 
 class TextSplitter:
+    """Разбивает документ на чанки с небольшим перекрытием."""
+
     def __init__(self, chunk_size: int, overlap: int) -> None:
         if overlap >= chunk_size:
             raise ValueError("CHUNK_OVERLAP должен быть меньше CHUNK_SIZE.")
@@ -16,9 +20,11 @@ class TextSplitter:
         self.overlap = overlap
 
     def clean_text(self, text: str) -> str:
+        """Очищает текст перед разбиением на фрагменты."""
         return normalize_document_text(text)
 
     def split(self, text: str) -> list[str]:
+        """Делит текст на чанки не длиннее заданного размера."""
         cleaned = self.clean_text(text)
         if not cleaned:
             return []
@@ -54,6 +60,7 @@ class TextSplitter:
         return self._deduplicate_nearby(chunks)
 
     def _build_blocks(self, text: str) -> list[str]:
+        """Собирает абзацы и присоединяет короткие заголовки к тексту."""
         paragraphs = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
         blocks: list[str] = []
         pending_heading = ""
@@ -73,6 +80,7 @@ class TextSplitter:
         return blocks
 
     def _is_heading(self, block: str) -> bool:
+        """Проверяет, похож ли блок на короткий заголовок."""
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if len(lines) != 1:
             return False
@@ -91,6 +99,7 @@ class TextSplitter:
         )
 
     def _split_long_block(self, block: str) -> list[str]:
+        """Делит длинный абзац по предложениям или жёстко по длине."""
         if len(block) <= self.chunk_size:
             return [block]
         if "```" in block:
@@ -120,10 +129,12 @@ class TextSplitter:
         return result
 
     def _split_sentences(self, text: str) -> list[str]:
+        """Разбивает текст по очевидным границам предложений."""
         parts = re.split(r"(?<=[.!?…])\s+(?=[A-ZА-ЯЁ0-9])", text)
         return [part.strip() for part in parts if part.strip()]
 
     def _split_hard_with_overlap(self, text: str) -> list[str]:
+        """Делит длинную строку с учётом overlap."""
         chunks: list[str] = []
         start = 0
         text_length = len(text)
@@ -141,6 +152,7 @@ class TextSplitter:
         return chunks
 
     def _find_chunk_end(self, text: str, start: int) -> int:
+        """Ищет естественную границу конца чанка."""
         hard_end = min(start + self.chunk_size, len(text))
         if hard_end == len(text):
             return hard_end
@@ -167,6 +179,7 @@ class TextSplitter:
         hard_end: int,
         min_boundary: int,
     ) -> int | None:
+        """Ищет ближайший конец предложения в окне чанка."""
         for index in range(hard_end - 1, min_boundary - 1, -1):
             if text[index] not in ".!?…":
                 continue
@@ -182,12 +195,14 @@ class TextSplitter:
         hard_end: int,
         min_boundary: int,
     ) -> int | None:
+        """Ищет пробел для мягкого разрыва чанка."""
         for index in range(hard_end - 1, min_boundary - 1, -1):
             if text[index].isspace():
                 return index
         return None
 
     def _find_next_start(self, text: str, start: int, end: int) -> int:
+        """Выбирает начало следующего чанка с учётом overlap."""
         if self.overlap == 0:
             next_start = end
         else:
@@ -205,6 +220,7 @@ class TextSplitter:
         return next_start
 
     def _make_overlap(self, previous: str) -> str:
+        """Берёт короткий хвост предыдущего чанка для контекста."""
         if self.overlap <= 0 or not previous:
             return ""
         tail = previous[-self.overlap:].strip()
@@ -216,6 +232,7 @@ class TextSplitter:
         return tail
 
     def _deduplicate_nearby(self, chunks: list[str]) -> list[str]:
+        """Удаляет почти одинаковые соседние чанки."""
         result: list[str] = []
         for chunk in chunks:
             if result and (chunk == result[-1] or chunk in result[-1] or result[-1] in chunk):

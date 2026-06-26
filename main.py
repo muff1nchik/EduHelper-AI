@@ -1,3 +1,5 @@
+"""Запускает Telegram-бота и собирает основные компоненты приложения."""
+
 import asyncio
 import logging
 from pathlib import Path
@@ -13,6 +15,7 @@ from app.splitter import TextSplitter
 
 
 async def main() -> None:
+    """Создаёт зависимости приложения и запускает бота."""
     logging.basicConfig(level=logging.INFO)
 
     settings = load_settings()

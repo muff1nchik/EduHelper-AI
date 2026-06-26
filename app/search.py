@@ -1,3 +1,5 @@
+"""Ищет подходящие фрагменты документа для ответа."""
+
 import math
 
 from app.text_utils import (
@@ -15,10 +17,13 @@ LEXICAL_WEAK_BONUS = 0.05
 
 
 class VectorSearch:
+    """Сравнивает embedding вопроса с фрагментами документа."""
+
     def __init__(self, min_similarity: float = 0.35) -> None:
         self.min_similarity = min_similarity
 
     def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
+        """Считает косинусную похожесть двух векторов."""
         if not vec1 or not vec2 or len(vec1) != len(vec2):
             raise ValueError("Embeddings должны быть непустыми векторами одинаковой длины.")
 
@@ -36,6 +41,7 @@ class VectorSearch:
         top_k: int,
         query_text: str = "",
     ) -> list[dict]:
+        """Возвращает релевантные фрагменты с учётом семантики и точных слов."""
         if not query_embedding:
             raise ValueError("Embedding вопроса пустой.")
 
@@ -78,6 +84,7 @@ class VectorSearch:
 
 
 def _build_query_features(query: str) -> dict:
+    """Готовит лексические признаки пользовательского запроса."""
     tokens = tokenize_for_search(query)
     return {
         "tokens": tokens,
@@ -89,6 +96,7 @@ def _build_query_features(query: str) -> dict:
 
 
 def _lexical_evidence(query: dict, content: str) -> dict:
+    """Оценивает, есть ли в фрагменте сильное совпадение по словам."""
     if not query["tokens"]:
         return {"strong": False, "bonus": 0.0}
 
@@ -122,6 +130,7 @@ def _lexical_evidence(query: dict, content: str) -> dict:
 
 
 def _heading_matches(query_tokens: set[str], content: str) -> bool:
+    """Проверяет совпадение запроса с заголовком фрагмента."""
     if not query_tokens or len(query_tokens) < 2:
         return False
     first_block = content.split("\n\n", 1)[0]
@@ -136,6 +145,7 @@ def _heading_matches(query_tokens: set[str], content: str) -> bool:
 
 
 def _with_neighbor_context(chunks: list[dict], main_results: list[dict]) -> list[dict]:
+    """Добавляет соседние фрагменты к найденному контексту."""
     if not main_results:
         return []
 
@@ -155,6 +165,7 @@ def _with_neighbor_context(chunks: list[dict], main_results: list[dict]) -> list
     current_length = 0
 
     def add_chunk(chunk: dict, base: dict | None = None, neighbor: bool = False) -> None:
+        """Добавляет фрагмент в итоговый контекст без дублей."""
         nonlocal current_length
         key = (chunk.get("document_id"), chunk.get("chunk_index"))
         if key in selected:

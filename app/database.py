@@ -1,3 +1,5 @@
+"""Работает с документами и настройками пользователей в SQLite."""
+
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -6,10 +8,13 @@ import aiosqlite
 
 
 class Database:
+    """Хранит документы, фрагменты и активный материал пользователя."""
+
     def __init__(self, path: str) -> None:
         self.path = path
 
     async def init(self) -> None:
+        """Создаёт нужные таблицы, если их ещё нет."""
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
@@ -52,6 +57,7 @@ class Database:
             await db.commit()
 
     async def add_document(self, user_id: int, filename: str, file_path: str) -> int:
+        """Добавляет запись документа и возвращает её идентификатор."""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 """
@@ -71,6 +77,7 @@ class Database:
         embedding: list[float],
         chunk_index: int,
     ) -> None:
+        """Сохраняет один фрагмент документа вместе с embedding."""
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """
@@ -96,6 +103,7 @@ class Database:
         file_path: str,
         chunks: list[dict],
     ) -> int:
+        """Атомарно сохраняет документ, фрагменты и делает его активным."""
         async with aiosqlite.connect(self.path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
             try:
@@ -142,6 +150,7 @@ class Database:
                 raise
 
     async def get_user_chunks(self, user_id: int) -> list[dict]:
+        """Возвращает все фрагменты пользователя со связанными файлами."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -173,6 +182,7 @@ class Database:
         return chunks
 
     async def get_document_chunks(self, user_id: int, document_id: int) -> list[dict]:
+        """Возвращает фрагменты выбранного документа пользователя."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -206,6 +216,7 @@ class Database:
         return chunks
 
     async def get_user_documents(self, user_id: int) -> list[dict]:
+        """Возвращает список документов пользователя от новых к старым."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -221,6 +232,7 @@ class Database:
         return [dict(row) for row in rows]
 
     async def set_active_document(self, user_id: int, document_id: int) -> dict | None:
+        """Выбирает активный документ, если он принадлежит пользователю."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA foreign_keys = ON")
@@ -249,6 +261,7 @@ class Database:
         return dict(row)
 
     async def get_active_document(self, user_id: int) -> dict | None:
+        """Возвращает активный документ или самый новый документ пользователя."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -279,6 +292,7 @@ class Database:
         return dict(row) if row is not None else None
 
     async def delete_document(self, user_id: int, document_id: int) -> dict | None:
+        """Удаляет документ пользователя и выбирает новый активный при необходимости."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA foreign_keys = ON")
@@ -355,6 +369,7 @@ class Database:
                 raise
 
     async def clear_user_data(self, user_id: int) -> list[str]:
+        """Очищает данные пользователя и возвращает пути его файлов."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA foreign_keys = ON")
@@ -380,6 +395,7 @@ class Database:
         return [row["file_path"] for row in rows]
 
     async def user_has_chunks(self, user_id: int) -> bool:
+        """Проверяет, есть ли у пользователя сохранённые фрагменты."""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 "SELECT 1 FROM chunks WHERE user_id = ? LIMIT 1",
@@ -389,4 +405,5 @@ class Database:
         return row is not None
 
     def _now(self) -> str:
+        """Возвращает текущее время в формате для базы."""
         return datetime.now(timezone.utc).isoformat()
