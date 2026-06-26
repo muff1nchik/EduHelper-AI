@@ -23,7 +23,22 @@ def main() -> None:
         file_name = f"{module_name.replace('.', '_')}.html"
         (output_dir / file_name).write_text(html, encoding="utf-8")
 
+    for html_path in output_dir.glob("*.html"):
+        _add_utf8_charset(html_path)
+
     print(f"HTML-документация создана: {output_dir}")
+
+
+def _add_utf8_charset(path: Path) -> None:
+    """Добавляет UTF-8 meta в HTML, если его ещё нет."""
+    text = path.read_text(encoding="utf-8")
+    if '<meta charset="utf-8">' in text.lower():
+        return
+    if "<head>" in text:
+        text = text.replace("<head>", '<head>\n<meta charset="utf-8">', 1)
+    else:
+        text = f'<meta charset="utf-8">\n{text}'
+    path.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":
