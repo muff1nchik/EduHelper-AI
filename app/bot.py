@@ -2,14 +2,17 @@
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import InputRichMessage, Message
 from aiogram.utils.chat_action import ChatActionSender
 
+from app.messages import REQUEST_IN_PROGRESS_MESSAGE
 from app.quiz import (
     QUIZ_DEFAULT_QUESTION_COUNT,
     QUIZ_EVALUATION_ERROR_MESSAGE,
@@ -25,6 +28,16 @@ from app.quiz import (
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
 SEMANTIC_ROUTER_MAX_LENGTH = 180
+RICH_MESSAGE_SAFE_LENGTH = 32_000
+RICH_MESSAGE_FORMAT_ERROR = (
+    "Не удалось корректно оформить ответ. Попробуйте повторить запрос."
+)
+RICH_MESSAGE_TOO_LONG = (
+    "Ответ получился слишком длинным для форматированного сообщения. "
+    "Уточните вопрос или запросите более краткий ответ."
+)
+logger = logging.getLogger(__name__)
+_processing_users: set[int] = set()
 GREETING_RESPONSE = (
     "Привет! Я помогу разобраться с учебными материалами. Загрузите документ "
     "или задайте вопрос по активному материалу. Команда /help покажет все возможности."
@@ -42,12 +55,14 @@ THANKS_RESPONSE = "Пожалуйста! Можете продолжать за�
 GOODBYE_RESPONSE = (
     "До встречи! Загруженные материалы останутся доступны при следующем запуске бота."
 )
+QUIZ_HINT_RESPONSE = "Для запуска викторины используйте команду /quiz."
 INTENT_RESPONSES = {
     "greeting": GREETING_RESPONSE,
     "capabilities": CAPABILITIES_RESPONSE,
     "usage": USAGE_RESPONSE,
     "thanks": THANKS_RESPONSE,
     "farewell": GOODBYE_RESPONSE,
+    "quiz_hint": QUIZ_HINT_RESPONSE,
 }
 GREETING_PHRASES = {
     "привет",
@@ -81,6 +96,11 @@ USAGE_PHRASES = {
 CAPABILITIES_PHRASES = {
     "что ты умеешь",
     "чем ты можешь помочь",
+}
+QUIZ_HINT_PHRASES = {
+    "сделай викторину",
+    "создай тест по документу",
+    "проверь меня по материалу",
 }
 
 
@@ -191,9 +211,6 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
                 "Использование: /quiz [количество вопросов от 1 до 10]."
             )
             return
-        if user_id in quiz_starting:
-            await message.answer("Викторина уже создаётся. Подождите немного.")
-            return
         if user_id in quiz_sessions:
             session = quiz_sessions[user_id]
             await message.answer(
@@ -201,6 +218,10 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
                 f"{session.current_index + 1}/{session.total_questions}.\n"
                 "Чтобы завершить её, используйте /stopquiz."
             )
+            return
+
+        if not _start_user_request(user_id):
+            await message.answer(REQUEST_IN_PROGRESS_MESSAGE)
             return
 
         quiz_starting.add(user_id)
@@ -215,6 +236,7 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
                 await send_long_message(message, result)
         finally:
             quiz_starting.discard(user_id)
+            _finish_user_request(user_id)
 
     @router.message(Command("stopquiz"))
     async def stop_quiz(message: Message) -> None:
@@ -242,10 +264,19 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             await message.answer("Использование: /summary")
             return
 
+        user_id = message.from_user.id
+        if not _start_user_request(user_id):
+            await message.answer(REQUEST_IN_PROGRESS_MESSAGE)
+            return
+
         try:
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
-                answer = await service.summarize_document(message.from_user.id)
-            await send_long_message(message, answer)
+                answer = await service.summarize_document(user_id)
+            await send_rich_answer(
+                message,
+                answer,
+                repair_markdown=service.prepare_rich_answer,
+            )
         except RuntimeError as exc:
             await message.answer(str(exc))
         except ValueError as exc:
@@ -253,6 +284,8 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
         except Exception:
             logging.exception("Ошибка создания конспекта")
             await message.answer("Не удалось подготовить ответ. Попробуйте позже.")
+        finally:
+            _finish_user_request(user_id)
 
     @router.message(F.document)
     async def handle_document(message: Message, bot: Bot) -> None:
@@ -265,10 +298,15 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             await message.answer("Поддерживаются только файлы PDF, TXT, MD и DOCX.")
             return
 
+        user_id = message.from_user.id
+        if not _start_user_request(user_id):
+            await message.answer(REQUEST_IN_PROGRESS_MESSAGE)
+            return
+
         uploads_path.mkdir(parents=True, exist_ok=True)
         safe_name = _safe_filename(original_name)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        local_path = uploads_path / f"{message.from_user.id}_{timestamp}_{safe_name}"
+        local_path = uploads_path / f"{user_id}_{timestamp}_{safe_name}"
 
         try:
             async with ChatActionSender.upload_document(
@@ -279,12 +317,12 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             await message.answer("Файл получен. Обрабатываю материал...")
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
                 chunks_count = await service.process_file(
-                    user_id=message.from_user.id,
+                    user_id=user_id,
                     file_path=str(local_path),
                     filename=original_name,
                 )
             stopped_quiz = _clear_quiz_state(
-                message.from_user.id,
+                user_id,
                 quiz_sessions,
                 quiz_starting,
             )
@@ -302,6 +340,8 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
             await message.answer(
                 "Не удалось обработать файл. Проверьте формат и попробуйте еще раз."
             )
+        finally:
+            _finish_user_request(user_id)
 
     @router.message(F.text)
     async def handle_question(message: Message, bot: Bot) -> None:
@@ -310,15 +350,16 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
         if not text or text.startswith("/"):
             return
 
-        if message.from_user.id in quiz_starting:
-            await message.answer("Викторина ещё создаётся. Подождите немного.")
+        user_id = message.from_user.id
+        if user_id in quiz_starting:
+            await message.answer(REQUEST_IN_PROGRESS_MESSAGE)
             return
-        if message.from_user.id in quiz_sessions:
+        if user_id in quiz_sessions:
             await _handle_quiz_answer(
                 message,
                 service,
                 quiz_sessions,
-                message.from_user.id,
+                user_id,
                 text,
             )
             return
@@ -327,23 +368,33 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
         if builtin_response is not None:
             await send_long_message(message, builtin_response)
             return
+
+        if not _start_user_request(user_id):
+            await message.answer(REQUEST_IN_PROGRESS_MESSAGE)
+            return
+
         query_embedding = None
-        if is_builtin_intent_candidate(text):
-            route = await service.route_text_semantic(text)
-            query_embedding = route.query_embedding
-            builtin_response = INTENT_RESPONSES.get(route.intent)
-            if builtin_response is not None:
-                await send_long_message(message, builtin_response)
-                return
 
         try:
+            if is_builtin_intent_candidate(text):
+                route = await service.route_text_semantic(text)
+                query_embedding = route.query_embedding
+                builtin_response = INTENT_RESPONSES.get(route.intent)
+                if builtin_response is not None:
+                    await send_long_message(message, builtin_response)
+                    return
+
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
                 answer = await service.answer_question(
-                    message.from_user.id,
+                    user_id,
                     text,
                     query_embedding=query_embedding,
                 )
-            await send_long_message(message, answer)
+            await send_rich_answer(
+                message,
+                answer,
+                repair_markdown=service.prepare_rich_answer,
+            )
         except RuntimeError as exc:
             await message.answer(str(exc))
         except ValueError as exc:
@@ -351,6 +402,8 @@ def create_dispatcher(service, database, uploads_dir: str) -> Dispatcher:
         except Exception:
             logging.exception("Ошибка ответа на вопрос")
             await message.answer("Не удалось подготовить ответ. Попробуйте позже.")
+        finally:
+            _finish_user_request(user_id)
 
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
@@ -387,6 +440,11 @@ async def _handle_quiz_answer(
         return
 
     session.is_processing = True
+    if not _start_user_request(user_id):
+        session.is_processing = False
+        await message.answer(REQUEST_IN_PROGRESS_MESSAGE)
+        return
+
     try:
         result = await service.evaluate_quiz_answer(
             question.question,
@@ -399,6 +457,7 @@ async def _handle_quiz_answer(
         current_session = quiz_sessions.get(user_id)
         if current_session is session:
             session.is_processing = False
+        _finish_user_request(user_id)
 
     current_session = quiz_sessions.get(user_id)
     if (
@@ -510,6 +569,19 @@ def _clear_quiz_state(
     return existed
 
 
+def _start_user_request(user_id: int) -> bool:
+    """Помечает пользователя как занятого тяжёлым запросом."""
+    if user_id in _processing_users:
+        return False
+    _processing_users.add(user_id)
+    return True
+
+
+def _finish_user_request(user_id: int) -> None:
+    """Снимает отметку о тяжёлом запросе пользователя."""
+    _processing_users.discard(user_id)
+
+
 async def run_bot(token: str, dispatcher: Dispatcher) -> None:
     """Запускает получение обновлений Telegram-ботом."""
     bot = Bot(token=token)
@@ -520,6 +592,46 @@ async def send_long_message(message: Message, text: str) -> None:
     """Отправляет длинный текст несколькими сообщениями."""
     for part in split_message(text):
         await message.answer(part)
+
+
+async def send_rich_answer(
+    message: Message,
+    text: str,
+    repair_markdown: Callable[[str], Awaitable[str]] | None = None,
+) -> None:
+    """Отправляет ответ как Rich Markdown с коротким fallback."""
+    if not text:
+        await message.answer(RICH_MESSAGE_FORMAT_ERROR)
+        return
+    if len(text) > RICH_MESSAGE_SAFE_LENGTH:
+        await message.answer(RICH_MESSAGE_TOO_LONG)
+        return
+
+    rich_message = InputRichMessage(markdown=text)
+    try:
+        await message.answer_rich(rich_message)
+    except TelegramBadRequest as exc:
+        logger.warning("Telegram отклонил Rich Markdown: %s", exc)
+        if repair_markdown is None:
+            await message.answer(RICH_MESSAGE_FORMAT_ERROR)
+            return
+        try:
+            repaired_text = await repair_markdown(text)
+        except RuntimeError as repair_exc:
+            logger.warning("Не удалось исправить Rich Markdown: %s", repair_exc)
+            await message.answer(RICH_MESSAGE_FORMAT_ERROR)
+            return
+        if not repaired_text:
+            await message.answer(RICH_MESSAGE_FORMAT_ERROR)
+            return
+        if len(repaired_text) > RICH_MESSAGE_SAFE_LENGTH:
+            await message.answer(RICH_MESSAGE_TOO_LONG)
+            return
+        try:
+            await message.answer_rich(InputRichMessage(markdown=repaired_text))
+        except TelegramBadRequest as second_exc:
+            logger.warning("Telegram повторно отклонил Rich Markdown: %s", second_exc)
+            await message.answer(RICH_MESSAGE_FORMAT_ERROR)
 
 
 def split_message(text: str, max_length: int = 4000) -> list[str]:
@@ -589,6 +701,8 @@ def detect_builtin_intent(text: str) -> str | None:
         return "usage"
     if normalized in CAPABILITIES_PHRASES:
         return "capabilities"
+    if normalized in QUIZ_HINT_PHRASES:
+        return "quiz_hint"
     return None
 
 

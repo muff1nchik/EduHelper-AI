@@ -3,18 +3,23 @@
 from dataclasses import dataclass
 import logging
 import math
+import re
+import unicodedata
 from pathlib import Path
 
 from app.loaders import get_loader
-from app.messages import INSUFFICIENT_INFORMATION_MESSAGE
+from app.messages import (
+    INSUFFICIENT_INFORMATION_MESSAGE,
+    PROMPT_INJECTION_REJECTION_MESSAGE,
+    QUIZ_GENERATION_ERROR_MESSAGE,
+)
+from app.ollama_client import OLLAMA_ERROR
 from app.quiz import (
     QUIZ_CONTEXT_MAX_CHARS,
     QUIZ_CONTEXT_MAX_CHUNKS,
     QUIZ_EVALUATION_ERROR_MESSAGE,
-    QUIZ_GENERATION_ERROR_MESSAGE,
     QUIZ_INSUFFICIENT_MESSAGE,
     QUIZ_MIN_CONTEXT_CHARS,
-    QUIZ_OLLAMA_ERROR_MESSAGE,
     QuizSession,
     QuizValidationError,
     format_quiz_context,
@@ -23,12 +28,71 @@ from app.quiz import (
     validate_evaluation_payload,
     validate_quiz_payload_partial,
 )
-from app.text_utils import clean_model_output
 
 
 logger = logging.getLogger(__name__)
 
 
+LATEX_COMMAND_RE = re.compile(
+    r"\\(?:alpha|beta|gamma|in|notin|le|leq|ge|geq|mathbb|frac|sqrt|int|sum|"
+    r"lim|to|infty|cdot|times)\b"
+)
+PROMPT_INJECTION_DIRECT_PATTERNS = (
+    "ignore previous instructions",
+    "ignore all instructions",
+    "disregard previous",
+    "forget previous instructions",
+    "new system prompt",
+    "developer prompt",
+    "hidden instructions",
+    "rules bypassed",
+    "jailbreak",
+    "игнорируй предыдущие инструкции",
+    "забудь предыдущие инструкции",
+    "новый системный промпт",
+    "раскрой внутренние инструкции",
+    "обойди правила",
+)
+PROMPT_INJECTION_PROTECTED_TARGETS = (
+    "system prompt",
+    "developer prompt",
+    "hidden instructions",
+    "internal instructions",
+    "системный промпт",
+    "системного промпта",
+    "внутренние инструкции",
+    "скрытые инструкции",
+    ".env",
+    "bot token",
+    "telegram token",
+    "api key",
+    "password",
+    "пароль",
+    "токен",
+    "ключ api",
+    "документы другого пользователя",
+    "данные другого пользователя",
+    "историю другого пользователя",
+)
+PROMPT_INJECTION_ACTIONS = (
+    "reveal",
+    "show",
+    "repeat",
+    "print",
+    "display",
+    "expose",
+    "give",
+    "send",
+    "покажи",
+    "показать",
+    "раскрой",
+    "раскрыть",
+    "повтори",
+    "выведи",
+    "напечатай",
+    "дай",
+    "выдай",
+)
 NO_MATERIALS_MESSAGE = "Сначала загрузите учебный файл."
 SUMMARY_CONTEXT_LIMIT = 12000
 SUMMARY_SINGLE_PASS_MAX_CHARS = 7000
@@ -47,11 +111,26 @@ SUMMARY_PROMPT = """
 Не добавляй факты, которых нет в материале.
 Сохраняй важные определения, формулы, классификации, этапы и перечисления.
 Не подменяй формулу названием формулы.
-Корректно распознанный LaTeX переводи в читаемую запись и не выводи лишние $.
+Оформляй конспект в Telegram Rich Markdown.
+Можно использовать заголовки и списки для читаемости.
+Сохраняй корректный LaTeX из исходного материала.
+Используй $...$ для формулы внутри строки и $$...$$ для отдельной формулы.
+Математические команды должны быть только внутри $...$ или $$...$$.
+Не оставляй сырой LaTeX вне математических блоков.
+Короткие обозначения внутри текста оформляй как inline-формулы.
+Отдельные формулы оформляй display-блоками.
+Не ставь пробел сразу после открывающего математического разделителя и перед
+закрывающим разделителем.
+Правильно: $f_k$, $x \\in A$, $$E = mc^2$$.
+Неправильно: $ f_k $, $ x \\in A $, $$ E = mc^2 $$.
+Не используй \\(...\\) и \\[...\\].
+Не изменяй содержание формул.
+Не помещай формулы в обратные кавычки.
 Если математическая запись явно повреждена, не восстанавливай её догадкой.
 Вместо сомнительной формулы напиши: Формула в исходном тексте распознана некорректно.
-Не используй Markdown или HTML.
+Не используй HTML.
 Не упоминай, что тебе был передан контекст.
+Формируй итоговый конспект короче 32000 символов.
 
 Структура:
 Краткий конспект
@@ -74,16 +153,48 @@ SUMMARY_MAP_PROMPT = """
 Сохрани тему фрагмента, основные идеи, определения, ключевые факты, важные формулы
 и обозначения, выводы, ограничения и важные замечания.
 Не добавляй внешние знания. Не подменяй формулу названием формулы.
+Оформляй ответ в Telegram Rich Markdown.
+Можно использовать заголовки и списки для читаемости.
+Сохраняй корректный LaTeX из исходного материала.
+Используй $...$ для формулы внутри строки и $$...$$ для отдельной формулы.
+Математические команды должны быть только внутри $...$ или $$...$$.
+Не оставляй сырой LaTeX вне математических блоков.
+Короткие обозначения внутри текста оформляй как inline-формулы.
+Отдельные формулы оформляй display-блоками.
+Не ставь пробел сразу после открывающего математического разделителя и перед
+закрывающим разделителем.
+Правильно: $f_k$, $x \\in A$, $$E = mc^2$$.
+Неправильно: $ f_k $, $ x \\in A $, $$ E = mc^2 $$.
+Не используй \\(...\\) и \\[...\\].
+Не изменяй содержание формул.
+Не помещай формулы в обратные кавычки.
 Если формула явно повреждена, не восстанавливай её догадкой; укажи словесный смысл,
 если он явно есть в тексте.
-Ответ должен быть обычным текстом без Markdown и HTML.
+Не используй HTML.
+Формируй ответ короче 32000 символов.
 """.strip()
 SUMMARY_REDUCE_PROMPT = """
 Собери итоговый структурированный конспект только из промежуточных конспектов.
 Удали повторы, сохрани важные определения, формулы, обозначения, факты и выводы.
 Не добавляй сведений, которых нет в промежуточных конспектах.
-Корректно распознанный LaTeX переводи в читаемую запись и не выводи лишние $.
+Оформляй конспект в Telegram Rich Markdown.
+Можно использовать заголовки и списки для читаемости.
+Сохраняй корректный LaTeX из исходного материала.
+Используй $...$ для формулы внутри строки и $$...$$ для отдельной формулы.
+Математические команды должны быть только внутри $...$ или $$...$$.
+Не оставляй сырой LaTeX вне математических блоков.
+Короткие обозначения внутри текста оформляй как inline-формулы.
+Отдельные формулы оформляй display-блоками.
+Не ставь пробел сразу после открывающего математического разделителя и перед
+закрывающим разделителем.
+Правильно: $f_k$, $x \\in A$, $$E = mc^2$$.
+Неправильно: $ f_k $, $ x \\in A $, $$ E = mc^2 $$.
+Не используй \\(...\\) и \\[...\\].
+Не изменяй содержание формул.
+Не помещай формулы в обратные кавычки.
 Если формула явно повреждена, не восстанавливай её догадкой.
+Не используй HTML.
+Формируй итоговый конспект короче 32000 символов.
 
 Структура:
 Краткий конспект
@@ -365,6 +476,14 @@ class EduHelperService:
         query_embedding: list[float] | None = None,
     ) -> str:
         """Отвечает на вопрос пользователя по активному документу."""
+        if _looks_like_prompt_injection(question):
+            logger.warning(
+                "Отклонён prompt injection: user_id=%s rule=%s",
+                user_id,
+                "prompt_injection",
+            )
+            return PROMPT_INJECTION_REJECTION_MESSAGE
+
         active_document = await self.database.get_active_document(user_id)
         if active_document is None:
             return NO_MATERIALS_MESSAGE
@@ -428,8 +547,8 @@ class EduHelperService:
         self._save_dialog_context(user_id, active_document["id"], question, answer)
         sources = _format_sources(results)
         if sources:
-            return f"{answer}\n\n{sources}"
-        return answer
+            return await self.prepare_rich_answer(f"{answer}\n\n{sources}")
+        return await self.prepare_rich_answer(answer)
 
     async def summarize_document(self, user_id: int) -> str:
         """Создаёт конспект активного документа пользователя."""
@@ -458,8 +577,8 @@ class EduHelperService:
                 return SUMMARY_ERROR_MESSAGE
             if summary.strip() == INSUFFICIENT_INFORMATION_MESSAGE:
                 return INSUFFICIENT_INFORMATION_MESSAGE
-            return (
-                f"{clean_model_output(summary)}\n\n"
+            return await self.prepare_rich_answer(
+                f"{_clean_rich_output(summary)}\n\n"
                 f"Источник: {active_document['filename']}"
             )
 
@@ -472,7 +591,9 @@ class EduHelperService:
         summary = await self._summarize_large_document(chunk_texts)
         if summary == SUMMARY_ERROR_MESSAGE:
             return summary
-        return f"{summary}\n\nИсточник: {active_document['filename']}"
+        return await self.prepare_rich_answer(
+            f"{summary}\n\nИсточник: {active_document['filename']}"
+        )
 
     async def _summarize_large_document(self, chunks: list[str]) -> str:
         """Создаёт конспект большого документа через несколько запросов."""
@@ -486,7 +607,7 @@ class EduHelperService:
                     batch,
                 )
                 map_summaries.append(
-                    clean_model_output(result)[:SUMMARY_PART_MAX_CHARS]
+                    _clean_rich_output(result)[:SUMMARY_PART_MAX_CHARS]
                 )
             return await self._reduce_summaries(map_summaries)
         except RuntimeError:
@@ -501,7 +622,7 @@ class EduHelperService:
                 SUMMARY_REDUCE_PROMPT,
                 reduce_batches[0],
             )
-            return clean_model_output(result)
+            return _clean_rich_output(result)
 
         partial_reduces = []
         for index, batch in enumerate(reduce_batches, start=1):
@@ -510,12 +631,12 @@ class EduHelperService:
                 SUMMARY_REDUCE_PROMPT,
                 batch,
             )
-            partial_reduces.append(clean_model_output(partial)[:SUMMARY_PART_MAX_CHARS])
+            partial_reduces.append(_clean_rich_output(partial)[:SUMMARY_PART_MAX_CHARS])
         final = await self.ollama_client.generate_answer(
             SUMMARY_REDUCE_PROMPT,
             partial_reduces,
         )
-        return clean_model_output(final)
+        return _clean_rich_output(final)
 
     async def generate_quiz(
         self,
@@ -552,11 +673,13 @@ class EduHelperService:
             len(context),
         )
         if len(context) < QUIZ_MIN_CONTEXT_CHARS:
-            logger.debug(
-                "Quiz rejected before Ollama: "
-                "reason=insufficient_selected_context user_id=%s document_id=%s",
+            logger.warning(
+                "Quiz generation failed: user_id=%s document_id=%s "
+                "reason=%s exception=%s",
                 user_id,
                 active_document["id"],
+                "quiz_insufficient_content",
+                "None",
             )
             return QUIZ_INSUFFICIENT_MESSAGE
 
@@ -597,18 +720,26 @@ class EduHelperService:
                 )
             except QuizValidationError as exc:
                 rejected_reasons.append("invalid_schema")
-                logger.debug(
-                    "Quiz validation error: reason=invalid_schema detail=%s",
-                    exc,
-                )
-                continue
-            except RuntimeError:
-                logger.exception(
-                    "Ошибка Ollama при генерации викторины: user_id=%s document_id=%s",
+                logger.warning(
+                    "Quiz generation failed: user_id=%s document_id=%s "
+                    "reason=%s exception=%s",
                     user_id,
                     active_document["id"],
+                    "quiz_validation_error",
+                    exc.__class__.__name__,
                 )
-                return QUIZ_OLLAMA_ERROR_MESSAGE
+                continue
+            except RuntimeError as exc:
+                reason, message = _classify_quiz_generation_error(exc)
+                logger.warning(
+                    "Quiz generation failed: user_id=%s document_id=%s "
+                    "reason=%s exception=%s",
+                    user_id,
+                    active_document["id"],
+                    reason,
+                    exc.__class__.__name__,
+                )
+                return message
 
             if validation.insufficient_material:
                 saw_insufficient_material = True
@@ -677,17 +808,27 @@ class EduHelperService:
                 requested_question_count=question_count,
             )
         if rejected_reasons:
-            logger.debug(
-                "Quiz generation failed: user_id=%s document_id=%s reasons=%s",
+            logger.warning(
+                "Quiz generation failed: user_id=%s document_id=%s "
+                "reason=%s exception=%s",
                 user_id,
                 active_document["id"],
-                sorted(set(rejected_reasons)),
+                "quiz_validation_error",
+                QuizValidationError.__name__,
             )
         if (
             saw_insufficient_material
             and not accepted_questions
             and not rejected_reasons
         ):
+            logger.warning(
+                "Quiz generation failed: user_id=%s document_id=%s "
+                "reason=%s exception=%s",
+                user_id,
+                active_document["id"],
+                "quiz_insufficient_content",
+                "None",
+            )
             return QUIZ_INSUFFICIENT_MESSAGE
         return QUIZ_GENERATION_ERROR_MESSAGE
 
@@ -725,6 +866,17 @@ class EduHelperService:
                 logger.exception("Ошибка Ollama при проверке ответа викторины")
                 return QUIZ_EVALUATION_ERROR_MESSAGE
         return QUIZ_EVALUATION_ERROR_MESSAGE
+
+    async def prepare_rich_answer(self, text: str) -> str:
+        """Исправляет Rich Markdown ответа, только если это нужно."""
+        normalized = _normalize_rich_math_delimiters(text)
+        if not _needs_rich_markdown_repair(normalized):
+            return normalized
+        repaired = await self.ollama_client.repair_rich_markdown(text)
+        repaired = _normalize_rich_math_delimiters(repaired)
+        if repaired and not _needs_rich_markdown_repair(repaired):
+            return repaired
+        return text
 
     async def use_document(self, user_id: int, document_id: int) -> str:
         """Выбирает активный документ пользователя."""
@@ -1023,6 +1175,185 @@ def _looks_like_follow_up(question: str) -> bool:
         if words and words[0] in FOLLOW_UP_PRONOUNS:
             return True
     return False
+
+
+def _looks_like_prompt_injection(text: str) -> bool:
+    """Проверяет, похож ли запрос на попытку сменить правила."""
+    normalized = unicodedata.normalize("NFKC", text or "").casefold()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return False
+
+    if re.search(r"\bdan\b", normalized):
+        return True
+    if any(pattern in normalized for pattern in PROMPT_INJECTION_DIRECT_PATTERNS):
+        return True
+
+    has_action = any(action in normalized for action in PROMPT_INJECTION_ACTIONS)
+    has_target = any(
+        target in normalized
+        for target in PROMPT_INJECTION_PROTECTED_TARGETS
+    )
+    if has_action and has_target:
+        return True
+
+    other_user_targets = (
+        "другого пользователя",
+        "других пользователей",
+        "another user",
+        "other users",
+    )
+    protected_data = (
+        "документы",
+        "данные",
+        "история",
+        "documents",
+        "data",
+        "history",
+    )
+    return (
+        has_action
+        and any(target in normalized for target in other_user_targets)
+        and any(item in normalized for item in protected_data)
+    )
+
+
+def _classify_quiz_generation_error(exc: RuntimeError) -> tuple[str, str]:
+    """Определяет причину сбоя генерации викторины."""
+    message = str(exc)
+    if message == OLLAMA_ERROR:
+        return "quiz_ollama_error", OLLAMA_ERROR
+    if message == PROMPT_INJECTION_REJECTION_MESSAGE:
+        return "quiz_security_rejection", PROMPT_INJECTION_REJECTION_MESSAGE
+    if "пустой ответ" in message:
+        return "quiz_empty_response", QUIZ_GENERATION_ERROR_MESSAGE
+    if "некорректный JSON" in message or "JSON не в виде объекта" in message:
+        return "quiz_invalid_json", QUIZ_GENERATION_ERROR_MESSAGE
+    return "quiz_generation_error", QUIZ_GENERATION_ERROR_MESSAGE
+
+
+def _needs_rich_markdown_repair(text: str) -> bool:
+    """Проверяет, нужно ли чинить Rich Markdown перед отправкой."""
+    if not text or not text.strip():
+        return True
+    if text.count("```") % 2 != 0:
+        return True
+    if _normalize_rich_math_delimiters(text) != text:
+        return True
+
+    outside_math = []
+    math_mode = None
+    index = 0
+    while index < len(text):
+        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] == "$":
+            if math_mode is None:
+                outside_math.append(text[index : index + 2])
+            index += 2
+            continue
+        if math_mode == "display":
+            if text.startswith("$$", index):
+                math_mode = None
+                index += 2
+            else:
+                index += 1
+            continue
+        if math_mode == "inline":
+            if text[index] == "$":
+                math_mode = None
+            index += 1
+            continue
+        if text.startswith("$$", index):
+            math_mode = "display"
+            index += 2
+            continue
+        if text[index] == "$":
+            math_mode = "inline"
+            index += 1
+            continue
+
+        outside_math.append(text[index])
+        index += 1
+
+    if math_mode is not None:
+        return True
+    return bool(LATEX_COMMAND_RE.search("".join(outside_math)))
+
+
+def _normalize_rich_math_delimiters(text: str) -> str:
+    """Убирает лишние пробелы у границ математических блоков."""
+    result = []
+    index = 0
+    inline_code = False
+    fenced_code = False
+
+    while index < len(text):
+        if text.startswith("```", index):
+            fenced_code = not fenced_code
+            result.append("```")
+            index += 3
+            continue
+        if fenced_code:
+            result.append(text[index])
+            index += 1
+            continue
+        if text[index] == "`":
+            inline_code = not inline_code
+            result.append(text[index])
+            index += 1
+            continue
+        if inline_code:
+            result.append(text[index])
+            index += 1
+            continue
+        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] == "$":
+            result.append(text[index : index + 2])
+            index += 2
+            continue
+        if text.startswith("$$", index):
+            closing = text.find("$$", index + 2)
+            if closing == -1:
+                result.append("$$")
+                index += 2
+                continue
+            inner = text[index + 2 : closing].strip(" \t")
+            result.append(f"$${inner}$$")
+            index = closing + 2
+            continue
+        if text[index] == "$":
+            if index + 1 < len(text) and text[index + 1].isdigit():
+                result.append(text[index])
+                index += 1
+                continue
+            closing = index + 1
+            while closing < len(text):
+                if text[closing] == "\\":
+                    closing += 2
+                    continue
+                if text[closing] == "$":
+                    break
+                closing += 1
+            if closing >= len(text):
+                result.append(text[index])
+                index += 1
+                continue
+            inner = text[index + 1 : closing].strip(" \t")
+            result.append(f"${inner}$")
+            index = closing + 1
+            continue
+
+        result.append(text[index])
+        index += 1
+
+    return "".join(result)
+
+
+def _clean_rich_output(text: str) -> str:
+    """Очищает текст, сохраняя Rich Markdown."""
+    cleaned = (text or "").strip()
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = re.sub(r"[ \t]+$", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def _delete_file(file_path: Path) -> bool:

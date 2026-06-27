@@ -4,6 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from app.messages import QUIZ_GENERATION_ERROR_MESSAGE
 from app.text_utils import clean_model_output, tokenize_for_search
 
 
@@ -21,13 +22,6 @@ QUIZ_INSUFFICIENT_MESSAGE = (
     "В активном документе недостаточно содержательного материала для викторины. "
     "Нужен документ, в котором есть определения, объяснения или факты, "
     "а не только список тем."
-)
-QUIZ_GENERATION_ERROR_MESSAGE = (
-    "Не удалось корректно составить викторину. Попробуйте ещё раз."
-)
-QUIZ_OLLAMA_ERROR_MESSAGE = (
-    "Не удалось создать викторину. Проверьте, что Ollama запущена, "
-    "и попробуйте ещё раз."
 )
 QUIZ_EVALUATION_ERROR_MESSAGE = (
     "Не удалось проверить ответ. Попробуйте отправить его ещё раз."
